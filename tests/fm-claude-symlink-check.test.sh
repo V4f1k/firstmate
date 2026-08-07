@@ -139,6 +139,46 @@ test_uncommitted_restore_still_fails() {
   pass "fm-claude-symlink-check.sh: a restore only passes once it is committed"
 }
 
+test_branch_tip_recovery_command_commits_only_claude_md() {
+  local repo out rc cmd committed staged
+  repo="$TMP_ROOT/recovery-command-scope"
+  fixture_repo "$repo"
+  git -C "$repo" checkout -q -b fm/worker
+  rm "$repo/CLAUDE.md"
+  printf 'stale content\n' > "$repo/CLAUDE.md"
+  git -C "$repo" add CLAUDE.md
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm demote
+
+  printf 'unrelated work in progress\n' > "$repo/feature.txt"
+  git -C "$repo" add feature.txt
+  git -C "$repo" checkout main -- CLAUDE.md
+
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit while the branch tip is still broken, got: $out"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
+  [ -n "$cmd" ] || fail "no branch-tip recovery command was printed: $out"
+
+  (
+    export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
+    export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
+    eval "$cmd"
+  ) >/dev/null 2>&1 || fail "the printed recovery command failed: $cmd"
+
+  committed=$(git -C "$repo" show --name-only --format= HEAD)
+  assert_contains "$committed" "CLAUDE.md" "the recovery commit did not restore CLAUDE.md"
+  case "$committed" in
+    *feature.txt*) fail "the recovery command swept unrelated staged work into its commit: $committed" ;;
+  esac
+  staged=$(git -C "$repo" diff --cached --name-only)
+  assert_contains "$staged" "feature.txt" "the recovery command consumed unrelated staged work instead of leaving it staged"
+
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "expected exit 0 after running the printed recovery command, got $rc: $out"
+  pass "fm-claude-symlink-check.sh: the printed branch-tip recovery command commits only CLAUDE.md"
+}
+
 test_branch_tip_dropping_claude_md_fails() {
   local repo out rc
   repo="$TMP_ROOT/tip-drops-file"
@@ -207,6 +247,7 @@ test_dangling_symlink_fails
 test_runs_from_a_subdirectory
 test_unknown_base_ref_errors
 test_uncommitted_restore_still_fails
+test_branch_tip_recovery_command_commits_only_claude_md
 test_branch_tip_dropping_claude_md_fails
 test_repo_without_symlink_policy_skips
 test_repo_without_claude_md_at_all_skips

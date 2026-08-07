@@ -162,7 +162,7 @@ if git -C "$DIR" rev-parse --verify --quiet HEAD >/dev/null; then
   if [ -n "$HEAD_PROBLEM" ]; then
     echo "error: the working tree is fine, but your branch tip $HEAD_PROBLEM, while $BASE manages it as a symlink -> $EXPECTED_TARGET." >&2
     echo "That is what a PR would carry, so the 'distinct types on each side' conflict would come back." >&2
-    echo "Commit the restored symlink: git -C '$DIR' add CLAUDE.md && git -C '$DIR' commit -m 'fix: restore the CLAUDE.md symlink'" >&2
+    echo "Commit the restored symlink: git -C '$DIR' commit -m 'fix: restore the CLAUDE.md symlink' -- CLAUDE.md" >&2
     exit 1
   fi
 fi
