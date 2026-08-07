@@ -139,44 +139,66 @@ test_uncommitted_restore_still_fails() {
   pass "fm-claude-symlink-check.sh: a restore only passes once it is committed"
 }
 
-test_branch_tip_recovery_command_commits_only_claude_md() {
-  local repo out rc cmd committed staged
-  repo="$TMP_ROOT/recovery-command-scope"
+# assert_branch_tip_recovery <label> <tip> <restore>: break the branch tip the way
+# <tip> says (demote = tip carries a regular file, drop = tip lost the file), fix
+# the working tree the way <restore> says (checkout = the guard's git checkout
+# hint, ln = its ln -sfn hint), then run the exact command the guard prints and
+# hold it to both invariants: it has to succeed, and it must commit CLAUDE.md
+# alone while unrelated staged work stays staged.
+assert_branch_tip_recovery() {
+  local label=$1 tip=$2 restore=$3 repo out rc cmd committed staged
+  repo="$TMP_ROOT/recovery-$label"
   fixture_repo "$repo"
   git -C "$repo" checkout -q -b fm/worker
-  rm "$repo/CLAUDE.md"
-  printf 'stale content\n' > "$repo/CLAUDE.md"
-  git -C "$repo" add CLAUDE.md
-  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm demote
+  if [ "$tip" = demote ]; then
+    rm "$repo/CLAUDE.md"
+    printf 'stale content\n' > "$repo/CLAUDE.md"
+    git -C "$repo" add CLAUDE.md
+    git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm demote
+  else
+    git -C "$repo" rm -q CLAUDE.md
+    git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm drop
+  fi
 
   printf 'unrelated work in progress\n' > "$repo/feature.txt"
   git -C "$repo" add feature.txt
-  git -C "$repo" checkout main -- CLAUDE.md
+  if [ "$restore" = checkout ]; then
+    git -C "$repo" checkout main -- CLAUDE.md
+  else
+    ( cd "$repo" && ln -sfn AGENTS.md CLAUDE.md )
+  fi
 
   out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
   rc=$?
-  [ "$rc" -ne 0 ] || fail "expected a non-zero exit while the branch tip is still broken, got: $out"
+  [ "$rc" -ne 0 ] || fail "$label: expected a non-zero exit while the branch tip is still broken, got: $out"
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
-  [ -n "$cmd" ] || fail "no branch-tip recovery command was printed: $out"
+  [ -n "$cmd" ] || fail "$label: no branch-tip recovery command was printed: $out"
 
   (
     export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
     export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
     eval "$cmd"
-  ) >/dev/null 2>&1 || fail "the printed recovery command failed: $cmd"
+  ) >/dev/null 2>&1 || fail "$label: the printed recovery command failed: $cmd"
 
   committed=$(git -C "$repo" show --name-only --format= HEAD)
-  assert_contains "$committed" "CLAUDE.md" "the recovery commit did not restore CLAUDE.md"
+  assert_contains "$committed" "CLAUDE.md" "$label: the recovery commit did not restore CLAUDE.md"
   case "$committed" in
-    *feature.txt*) fail "the recovery command swept unrelated staged work into its commit: $committed" ;;
+    *feature.txt*) fail "$label: the recovery command swept unrelated staged work into its commit: $committed" ;;
   esac
   staged=$(git -C "$repo" diff --cached --name-only)
-  assert_contains "$staged" "feature.txt" "the recovery command consumed unrelated staged work instead of leaving it staged"
+  assert_contains "$staged" "feature.txt" "$label: the recovery command consumed unrelated staged work instead of leaving it staged"
 
   out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
   rc=$?
-  [ "$rc" -eq 0 ] || fail "expected exit 0 after running the printed recovery command, got $rc: $out"
-  pass "fm-claude-symlink-check.sh: the printed branch-tip recovery command commits only CLAUDE.md"
+  [ "$rc" -eq 0 ] || fail "$label: expected exit 0 after running the printed recovery command, got $rc: $out"
+}
+
+test_branch_tip_recovery_command_works_from_every_restore_path() {
+  assert_branch_tip_recovery demoted-tip-checkout-restore demote checkout
+  assert_branch_tip_recovery demoted-tip-symlink-restore demote ln
+  assert_branch_tip_recovery dropped-tip-checkout-restore drop checkout
+  assert_branch_tip_recovery dropped-tip-symlink-restore drop ln
+  pass "fm-claude-symlink-check.sh: the printed recovery command commits only CLAUDE.md from every restore path"
 }
 
 test_branch_tip_dropping_claude_md_fails() {
@@ -247,7 +269,7 @@ test_dangling_symlink_fails
 test_runs_from_a_subdirectory
 test_unknown_base_ref_errors
 test_uncommitted_restore_still_fails
-test_branch_tip_recovery_command_commits_only_claude_md
+test_branch_tip_recovery_command_works_from_every_restore_path
 test_branch_tip_dropping_claude_md_fails
 test_repo_without_symlink_policy_skips
 test_repo_without_claude_md_at_all_skips
