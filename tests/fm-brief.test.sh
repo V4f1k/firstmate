@@ -386,6 +386,8 @@ test_ship_repo_hygiene_check_renders_in_every_mode() {
       "$mode: brief does not tell the worker to run fm-claude-symlink-check.sh"
     assert_grep "run the recovery command it prints, then re-run the check until it passes" "$brief" \
       "$mode: brief lost the recovery-and-recheck instruction"
+    assert_grep "a restore only counts once you commit it" "$brief" \
+      "$mode: brief does not say the restored symlink has to be committed"
   done
   pass "fm-brief.sh: every ship mode renders the CLAUDE.md symlink guard before Definition of done"
 }

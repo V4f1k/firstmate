@@ -461,7 +461,8 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 
 # Repo hygiene check
 Before you report done, run \`$FM_ROOT/bin/fm-claude-symlink-check.sh .\`.
-It is silent and exits 0 in almost every project; it only speaks up when this project keeps \`CLAUDE.md\` as a symlink to \`AGENTS.md\` and your branch's working tree lost that symlink - a known git hazard where syncing a branch whose history predates the symlink against a base that already has it hits a "distinct types on each side" conflict, easy to mis-resolve by dropping the file instead of keeping the symlink.
+It is silent and exits 0 in almost every project; it only speaks up when this project keeps \`CLAUDE.md\` as a symlink to \`AGENTS.md\` and your branch lost that symlink - a known git hazard where syncing a branch whose history predates the symlink against a base that already has it hits a "distinct types on each side" conflict, easy to mis-resolve by dropping the file instead of keeping the symlink.
+It checks your working tree and your branch tip, so a restore only counts once you commit it.
 If it reports an error, run the recovery command it prints, then re-run the check until it passes.
 
 $DOD
