@@ -459,6 +459,11 @@ For anything the codebase already shows, prefer a pointer to the authoritative f
 If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
 Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
 
+# Repo hygiene check
+Before you report done, run \`$FM_ROOT/bin/fm-claude-symlink-check.sh .\`.
+It is silent and exits 0 in almost every project; it only speaks up when this project keeps \`CLAUDE.md\` as a symlink to \`AGENTS.md\` and your branch's working tree lost that symlink - a known git hazard where syncing a branch whose history predates the symlink against a base that already has it hits a "distinct types on each side" conflict, easy to mis-resolve by dropping the file instead of keeping the symlink.
+If it reports an error, run the recovery command it prints, then re-run the check until it passes.
+
 $DOD
 EOF
 echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK})"

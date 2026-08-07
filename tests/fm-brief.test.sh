@@ -371,6 +371,25 @@ test_ship_project_memory_wording() {
   pass "fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar"
 }
 
+test_ship_repo_hygiene_check_renders_in_every_mode() {
+  local home mode id brief
+  home="$TMP_ROOT/repo-hygiene-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-hygiene-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$mode: brief was not scaffolded"
+    assert_grep "# Repo hygiene check" "$brief" \
+      "$mode: brief missing the repo hygiene check section"
+    assert_grep "bin/fm-claude-symlink-check.sh ." "$brief" \
+      "$mode: brief does not tell the worker to run fm-claude-symlink-check.sh"
+    assert_grep "run the recovery command it prints, then re-run the check until it passes" "$brief" \
+      "$mode: brief lost the recovery-and-recheck instruction"
+  done
+  pass "fm-brief.sh: every ship mode renders the CLAUDE.md symlink guard before Definition of done"
+}
+
 test_herdr_lab_contract_is_explicit_and_complete() {
   local home id brief
   home="$TMP_ROOT/herdr-lab-home"
@@ -720,6 +739,7 @@ test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording
+test_ship_repo_hygiene_check_renders_in_every_mode
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
