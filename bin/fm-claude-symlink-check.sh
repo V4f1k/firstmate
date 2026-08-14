@@ -169,7 +169,7 @@ stage_target_command() {
 
 commit_branch_tip_command() {
   if [ "$1" = 1 ]; then
-    printf 'git -C %s --literal-pathspecs add -- %s && git -C %s --literal-pathspecs add -f -- %s && git -C %s --literal-pathspecs commit -m %s -- %s %s' \
+    printf 'git -C %s --literal-pathspecs add -f -- %s && git -C %s --literal-pathspecs add -f -- %s && git -C %s --literal-pathspecs commit -m %s -- %s %s' \
       "$(shell_quote "$DIR")" \
       "$(shell_quote CLAUDE.md)" \
       "$(shell_quote "$DIR")" \
@@ -179,7 +179,7 @@ commit_branch_tip_command() {
       "$(shell_quote CLAUDE.md)" \
       "$(shell_quote "$EXPECTED_TARGET")"
   else
-    printf 'git -C %s --literal-pathspecs add -- %s && git -C %s --literal-pathspecs commit -m %s -- %s' \
+    printf 'git -C %s --literal-pathspecs add -f -- %s && git -C %s --literal-pathspecs commit -m %s -- %s' \
       "$(shell_quote "$DIR")" \
       "$(shell_quote CLAUDE.md)" \
       "$(shell_quote "$DIR")" \
@@ -328,17 +328,12 @@ if [ "$INDEX_TARGET_LINES" -ne 1 ] || [ "$INDEX_TARGET_STAGE" != 0 ]; then
   exit 1
 fi
 
-INDEX_TREE=$(git -C "$DIR" write-tree 2>/dev/null) || {
-  echo "error: cannot materialize the index as a tree in $DIR." >&2
+INDEX_INTENT_TO_ADD=$(git -C "$DIR" --literal-pathspecs diff-files --name-only --diff-filter=A -- "$EXPECTED_TARGET") || {
+  echo "error: cannot inspect the expected target's index state in $DIR" >&2
   exit 1
 }
-INDEX_TREE_TARGET_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-tree --full-tree "$INDEX_TREE" -- "$EXPECTED_TARGET") || {
-  echo "error: cannot read the expected target '$EXPECTED_TARGET' from the index tree in $DIR" >&2
-  exit 1
-}
-INDEX_TREE_TARGET_LINES=$(printf '%s\n' "$INDEX_TREE_TARGET_ENTRY" | awk 'END {print NR}')
-if [ "$INDEX_TREE_TARGET_LINES" -ne 1 ] || ! tree_entry_is_regular_file "$INDEX_TREE_TARGET_ENTRY"; then
-  echo "error: the expected target '$EXPECTED_TARGET' would not be present as a regular file in the next tree for $DIR." >&2
+if [ -n "$INDEX_INTENT_TO_ADD" ]; then
+  echo "error: the expected target '$EXPECTED_TARGET' is only intent-to-add in the index, so it would not be present in the next tree for $DIR." >&2
   echo "Stage the target in the index: $(stage_target_command)" >&2
   exit 1
 fi

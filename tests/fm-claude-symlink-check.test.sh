@@ -250,7 +250,7 @@ test_branch_tip_recovery_force_adds_ignored_target() {
   repo="$TMP_ROOT/recovery-ignored-target"
   fixture_repo "$repo"
   git -C "$repo" checkout -q -b fm/worker
-  printf 'AGENTS.md\n' > "$repo/.gitignore"
+  printf 'AGENTS.md\nCLAUDE.md\n' > "$repo/.gitignore"
   git -C "$repo" add .gitignore
   git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm ignore-target
   git -C "$repo" rm -q AGENTS.md
@@ -261,6 +261,8 @@ test_branch_tip_recovery_force_adds_ignored_target() {
   [ "$rc" -ne 0 ] || fail "expected a non-zero exit while the branch tip omits an ignored target"
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
   [ -n "$cmd" ] || fail "ignored-target recovery did not print a commit command: $out"
+  assert_contains "$cmd" "--literal-pathspecs add -f -- 'CLAUDE.md'" \
+    "ignored-target recovery did not force-add the known CLAUDE.md path"
   assert_contains "$cmd" "--literal-pathspecs add -f -- 'AGENTS.md'" \
     "ignored-target recovery did not force-add the known target"
   (
@@ -410,16 +412,19 @@ test_index_target_recovery_preserves_worktree_edits() {
 }
 
 test_index_rejects_intent_to_add_target() {
-  local repo out rc cmd
+  local repo out rc cmd objects_before objects_after
   repo="$TMP_ROOT/index-intent-to-add"
   fixture_repo "$repo"
   git -C "$repo" rm --cached -q AGENTS.md
   git -C "$repo" add -N AGENTS.md
+  objects_before=$(git -C "$repo" count-objects -v | awk -F': ' '$1 == "count" {print $2}')
   out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
   rc=$?
+  objects_after=$(git -C "$repo" count-objects -v | awk -F': ' '$1 == "count" {print $2}')
   [ "$rc" -ne 0 ] || fail "expected a non-zero exit for an intent-to-add target"
-  assert_contains "$out" "would not be present as a regular file in the next tree" \
-    "intent-to-add target was not rejected as absent from the next tree"
+  [ "$objects_before" = "$objects_after" ] || fail "intent-to-add check mutated the object database"
+  assert_contains "$out" "only intent-to-add in the index" \
+    "intent-to-add target was not rejected"
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Stage the target in the index: //p')
   [ -n "$cmd" ] || fail "intent-to-add target did not print a staging command: $out"
   eval "$cmd" >/dev/null 2>&1 || fail "intent-to-add recovery command failed: $cmd"

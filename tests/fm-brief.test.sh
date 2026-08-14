@@ -393,6 +393,8 @@ test_ship_repo_hygiene_check_renders_in_every_mode() {
       "$mode: brief lost the recovery-and-recheck instruction"
     assert_grep "a restore only counts once you commit it" "$brief" \
       "$mode: brief does not say the restored symlink has to be committed"
+    assert_grep "resolved base branch manages \`CLAUDE.md\` as a symlink to its expected target" "$brief" \
+      "$mode: brief hardcodes an incorrect symlink target"
     if [ "$mode" = direct-PR ]; then
       hygiene_line=$(grep -n "For direct-PR delivery, run this before pushing or opening the PR" "$brief" | cut -d: -f1)
       push_line=$(grep -n "push your branch and open a PR" "$brief" | cut -d: -f1)
