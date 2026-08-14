@@ -162,14 +162,23 @@ restore_target_command() {
 }
 
 commit_branch_tip_command() {
-  printf 'git -C %s --literal-pathspecs add -- %s %s && git -C %s --literal-pathspecs commit -m %s -- %s %s' \
-    "$(shell_quote "$DIR")" \
-    "$(shell_quote CLAUDE.md)" \
-    "$(shell_quote "$EXPECTED_TARGET")" \
-    "$(shell_quote "$DIR")" \
-    "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
-    "$(shell_quote CLAUDE.md)" \
-    "$(shell_quote "$EXPECTED_TARGET")"
+  if [ "$1" = 1 ]; then
+    printf 'git -C %s --literal-pathspecs add -- %s %s && git -C %s --literal-pathspecs commit -m %s -- %s %s' \
+      "$(shell_quote "$DIR")" \
+      "$(shell_quote CLAUDE.md)" \
+      "$(shell_quote "$EXPECTED_TARGET")" \
+      "$(shell_quote "$DIR")" \
+      "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
+      "$(shell_quote CLAUDE.md)" \
+      "$(shell_quote "$EXPECTED_TARGET")"
+  else
+    printf 'git -C %s --literal-pathspecs add -- %s && git -C %s --literal-pathspecs commit -m %s -- %s' \
+      "$(shell_quote "$DIR")" \
+      "$(shell_quote CLAUDE.md)" \
+      "$(shell_quote "$DIR")" \
+      "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
+      "$(shell_quote CLAUDE.md)"
+  fi
 }
 
 if [ ! -e "$CLAUDE" ] && [ ! -L "$CLAUDE" ]; then
@@ -213,6 +222,14 @@ if git -C "$DIR" rev-parse --verify --quiet HEAD >/dev/null; then
     exit 1
   }
   HEAD_PROBLEM=
+  HEAD_NEEDS_TARGET=0
+  HEAD_TARGET_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-tree --full-tree HEAD -- "$EXPECTED_TARGET") || {
+    echo "error: cannot read the expected target '$EXPECTED_TARGET' out of HEAD in $DIR" >&2
+    exit 1
+  }
+  if ! tree_entry_is_regular_file "$HEAD_TARGET_ENTRY"; then
+    HEAD_NEEDS_TARGET=1
+  fi
   if [ -z "$HEAD_ENTRY" ]; then
     HEAD_PROBLEM="drops CLAUDE.md entirely"
   else
@@ -227,21 +244,15 @@ if git -C "$DIR" rev-parse --verify --quiet HEAD >/dev/null; then
       }
       if [ "$HEAD_TARGET" != "$EXPECTED_TARGET" ]; then
         HEAD_PROBLEM="carries CLAUDE.md as a symlink to '$HEAD_TARGET'"
-      else
-        HEAD_TARGET_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-tree --full-tree HEAD -- "$EXPECTED_TARGET") || {
-          echo "error: cannot read the expected target '$EXPECTED_TARGET' out of HEAD in $DIR" >&2
-          exit 1
-        }
-        if ! tree_entry_is_regular_file "$HEAD_TARGET_ENTRY"; then
-          HEAD_PROBLEM="does not carry the expected target '$EXPECTED_TARGET' as a regular file"
-        fi
+      elif [ "$HEAD_NEEDS_TARGET" -eq 1 ]; then
+        HEAD_PROBLEM="does not carry the expected target '$EXPECTED_TARGET' as a regular file"
       fi
     fi
   fi
   if [ -n "$HEAD_PROBLEM" ]; then
     echo "error: the working tree is fine, but your branch tip $HEAD_PROBLEM, while $BASE manages it as a symlink -> $EXPECTED_TARGET." >&2
     echo "That is what a PR would carry, so the 'distinct types on each side' conflict would come back." >&2
-    echo "Commit the restored symlink: $(commit_branch_tip_command)" >&2
+    echo "Commit the restored symlink: $(commit_branch_tip_command "$HEAD_NEEDS_TARGET")" >&2
     exit 1
   fi
 fi

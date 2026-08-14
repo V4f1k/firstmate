@@ -245,6 +245,72 @@ test_branch_tip_missing_target_fails() {
   pass "fm-claude-symlink-check.sh: branch tips must retain the regular symlink target"
 }
 
+test_branch_tip_recovery_preserves_target_work() {
+  local repo out rc cmd committed staged
+  repo="$TMP_ROOT/recovery-preserves-target-work"
+  fixture_repo "$repo"
+  git -C "$repo" checkout -q -b fm/worker
+  rm "$repo/CLAUDE.md"
+  printf 'stale content\n' > "$repo/CLAUDE.md"
+  git -C "$repo" add CLAUDE.md
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm demote
+
+  git -C "$repo" checkout main -- CLAUDE.md
+  printf '# target work in progress\n' > "$repo/AGENTS.md"
+  git -C "$repo" add AGENTS.md
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit while the branch tip is demoted, got: $out"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
+  [ -n "$cmd" ] || fail "target-work recovery did not print a commit command: $out"
+  assert_not_contains "$cmd" "'AGENTS.md'" "target-work recovery would include an already committed target"
+  (
+    export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
+    export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
+    eval "$cmd"
+  ) >/dev/null 2>&1 || fail "target-work recovery command failed: $cmd"
+  committed=$(git -C "$repo" show --name-only --format= HEAD)
+  case "$committed" in
+    *AGENTS.md*) fail "target-work recovery swept target work into its commit: $committed" ;;
+  esac
+  staged=$(git -C "$repo" diff --cached --name-only)
+  assert_contains "$staged" "AGENTS.md" "target-work recovery consumed the staged target work"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "expected exit 0 after target-work recovery, got $rc: $out"
+  pass "fm-claude-symlink-check.sh: branch-tip recovery preserves target work"
+}
+
+test_branch_tip_recovery_restores_missing_target_for_regular_claude() {
+  local repo out rc cmd
+  repo="$TMP_ROOT/recovery-missing-target-regular-claude"
+  fixture_repo "$repo"
+  git -C "$repo" checkout -q -b fm/worker
+  git -C "$repo" rm -q -- AGENTS.md CLAUDE.md
+  printf 'stale content\n' > "$repo/CLAUDE.md"
+  git -C "$repo" add CLAUDE.md
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm demote-without-target
+
+  printf '# agents restored\n' > "$repo/AGENTS.md"
+  rm "$repo/CLAUDE.md"
+  ( cd "$repo" && ln -s AGENTS.md CLAUDE.md )
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit for a demoted CLAUDE.md with a missing branch-tip target"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
+  [ -n "$cmd" ] || fail "missing-target regular-CLAUDE recovery did not print a commit command: $out"
+  assert_contains "$cmd" "'AGENTS.md'" "missing-target regular-CLAUDE recovery omitted the target"
+  (
+    export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
+    export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
+    eval "$cmd"
+  ) >/dev/null 2>&1 || fail "missing-target regular-CLAUDE recovery command failed: $cmd"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "expected exit 0 after missing-target regular-CLAUDE recovery, got $rc: $out"
+  pass "fm-claude-symlink-check.sh: recovery restores a missing target with a regular branch-tip CLAUDE.md"
+}
+
 test_worktree_target_must_be_regular_file() {
   local repo out rc
   repo="$TMP_ROOT/target-directory"
@@ -452,6 +518,8 @@ test_uncommitted_restore_still_fails
 test_branch_tip_recovery_command_works_from_every_restore_path
 test_branch_tip_dropping_claude_md_fails
 test_branch_tip_missing_target_fails
+test_branch_tip_recovery_preserves_target_work
+test_branch_tip_recovery_restores_missing_target_for_regular_claude
 test_worktree_target_must_be_regular_file
 test_index_rejects_staged_claude_deletion
 test_index_rejects_staged_target_deletion
