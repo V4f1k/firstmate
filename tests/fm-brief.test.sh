@@ -393,6 +393,13 @@ test_ship_repo_hygiene_check_renders_in_every_mode() {
       "$mode: brief lost the recovery-and-recheck instruction"
     assert_grep "a restore only counts once you commit it" "$brief" \
       "$mode: brief does not say the restored symlink has to be committed"
+    if [ "$mode" = direct-PR ]; then
+      hygiene_line=$(grep -n "For direct-PR delivery, run this before pushing or opening the PR" "$brief" | cut -d: -f1)
+      push_line=$(grep -n "push your branch and open a PR" "$brief" | cut -d: -f1)
+      [ -n "$hygiene_line" ] || fail "$mode: brief does not put the hygiene check before direct-PR delivery"
+      [ -n "$push_line" ] || fail "$mode: brief is missing its direct-PR push instruction"
+      [ "$hygiene_line" -lt "$push_line" ] || fail "$mode: hygiene check appears after the direct-PR push instruction"
+    fi
   done
   pass "fm-brief.sh: every ship mode renders the CLAUDE.md symlink guard before Definition of done"
 }

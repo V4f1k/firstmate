@@ -359,6 +359,27 @@ test_index_rejects_staged_target_deletion() {
   pass "fm-claude-symlink-check.sh: staged symlink-target deletion fails"
 }
 
+test_index_target_recovery_preserves_worktree_edits() {
+  local repo out rc cmd
+  repo="$TMP_ROOT/index-target-recovery"
+  fixture_repo "$repo"
+  git -C "$repo" rm --cached -q AGENTS.md
+  printf '# edited target\n' > "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit when the target is missing from the index"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Stage the target in the index: //p')
+  [ -n "$cmd" ] || fail "index-target recovery did not print a staging command: $out"
+  assert_contains "$cmd" "--literal-pathspecs add -- 'AGENTS.md'" \
+    "index-target recovery did not use a literal git add"
+  eval "$cmd" >/dev/null 2>&1 || fail "index-target staging command failed: $cmd"
+  [ "$(cat "$repo/AGENTS.md")" = '# edited target' ] || fail "index-target recovery overwrote worktree edits"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "expected exit 0 after staging the edited target, got $rc: $out"
+  pass "fm-claude-symlink-check.sh: index-target recovery preserves worktree edits"
+}
+
 test_recovery_commands_quote_repository_operands() {
   local repo base target out rc checkout_cmd ln_cmd
   repo="$TMP_ROOT/recovery-special-'dir"
@@ -523,6 +544,7 @@ test_branch_tip_recovery_restores_missing_target_for_regular_claude
 test_worktree_target_must_be_regular_file
 test_index_rejects_staged_claude_deletion
 test_index_rejects_staged_target_deletion
+test_index_target_recovery_preserves_worktree_edits
 test_recovery_commands_quote_repository_operands
 test_recovery_target_pathspecs_are_literal
 test_repo_without_symlink_policy_skips

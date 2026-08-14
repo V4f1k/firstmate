@@ -161,6 +161,12 @@ restore_target_command() {
     "$(shell_quote "$EXPECTED_TARGET")"
 }
 
+stage_target_command() {
+  printf 'git -C %s --literal-pathspecs add -- %s' \
+    "$(shell_quote "$DIR")" \
+    "$(shell_quote "$EXPECTED_TARGET")"
+}
+
 commit_branch_tip_command() {
   if [ "$1" = 1 ]; then
     printf 'git -C %s --literal-pathspecs add -- %s %s && git -C %s --literal-pathspecs commit -m %s -- %s %s' \
@@ -301,7 +307,7 @@ INDEX_TARGET_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-files --stage -- "$EXP
 }
 if [ -z "$INDEX_TARGET_ENTRY" ]; then
   echo "error: the expected target '$EXPECTED_TARGET' is missing from the index in $DIR." >&2
-  echo "Restore the target: $(restore_target_command)" >&2
+  echo "Stage the target in the index: $(stage_target_command)" >&2
   exit 1
 fi
 INDEX_TARGET_LINES=$(printf '%s\n' "$INDEX_TARGET_ENTRY" | awk 'END {print NR}')
@@ -311,13 +317,13 @@ case "$INDEX_TARGET_MODE" in
   100*) ;;
   *)
     echo "error: the expected target '$EXPECTED_TARGET' is not staged as a regular file in $DIR." >&2
-    echo "Restore the target: $(restore_target_command)" >&2
+    echo "Stage the target in the index: $(stage_target_command)" >&2
     exit 1
     ;;
 esac
 if [ "$INDEX_TARGET_LINES" -ne 1 ] || [ "$INDEX_TARGET_STAGE" != 0 ]; then
   echo "error: the expected target '$EXPECTED_TARGET' has unmerged index entries in $DIR." >&2
-  echo "Restore the target: $(restore_target_command)" >&2
+  echo "Stage the target in the index: $(stage_target_command)" >&2
   exit 1
 fi
 
