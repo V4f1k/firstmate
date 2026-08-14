@@ -1442,21 +1442,51 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
   return 0
 }
 
+# Bash command substitutions may expose their result pipe on a descriptor above
+# 2, so the server child closes every inherited non-stdio descriptor before exec.
+fm_backend_herdr_close_inherited_fds() {
+  local fd
+  for fd in /dev/fd/*; do
+    fd=${fd##*/}
+    case "$fd" in
+      ''|*[!0-9]*|0|1|2) continue ;;
+    esac
+    eval "exec ${fd}>&-"
+  done
+}
+
 # fm_backend_herdr_server_ensure: start the herdr server for <session>
 # headless (no TUI client) if not already running, mirroring tmux's `tmux
 # has-session || tmux new-session -d`. Verified: a bare socket CLI call does
 # NOT auto-start the server, so this must run before any workspace/tab/pane
 # call. Bounded poll for the server to report running.
+# A readiness failure terminates and reaps only the direct start child; successful
+# readiness leaves the server running without adding general liveness ownership.
 fm_backend_herdr_server_ensure() {  # <session>
-  local session=$1 running out i
+  local session=$1 running i start_pid
   running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
   [ "$running" = "true" ] && return 0
-  ( fm_backend_herdr_cli "$session" server >/dev/null 2>&1 & ) || return 1
+  (
+    fm_backend_herdr_close_inherited_fds
+    HERDR_SESSION="$session" exec herdr server --session "$session"
+  ) </dev/null >/dev/null 2>&1 &
+  start_pid=$!
   for i in $(seq 1 20); do
     running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
     [ "$running" = "true" ] && return 0
     sleep 0.5
   done
+  if kill -0 "$start_pid" 2>/dev/null; then
+    kill -TERM "$start_pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$start_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$start_pid" 2>/dev/null; then
+      kill -KILL "$start_pid" 2>/dev/null || true
+    fi
+  fi
+  wait "$start_pid" 2>/dev/null || true
   echo "error: herdr server for session '$session' did not report running within 10s" >&2
   return 1
 }

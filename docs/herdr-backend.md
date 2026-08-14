@@ -203,6 +203,9 @@ Workspace and tab ids support verification and cleanup but are not inferred from
 ## Current transport behavior
 
 The adapter starts and polls a named server before workspace, tab, pane, or agent calls.
+Starting a missing named server uses a background start child with stdin, stdout, and stderr redirected explicitly and with inherited descriptors above 2 closed before `exec`, so a caller can return after readiness without a Bash command-substitution pipe keeping the server attached.
+The existing bounded 10-second readiness poll returns with the server running on success; on failure it sends `TERM`, escalates to `KILL` within a bounded window, and reaps only the direct start child.
+That cleanup is limited to a failed start and does not introduce general Herdr liveness, identity, PID-ownership, or lifecycle tracking.
 Every Herdr invocation goes through `fm_backend_herdr_cli`, which sets the environment and passes an explicit trailing `--session <name>`.
 An environment variable alone is not reliable when another Herdr server is running.
 

@@ -20,7 +20,66 @@ TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 JOB_LABEL=dev.firstmate.remote-job
 CASE_N=0
 DOCTOR_WORKER_PID=
-trap 'if [ -n "$DOCTOR_WORKER_PID" ]; then kill "$DOCTOR_WORKER_PID" 2>/dev/null || true; fi; fm_test_cleanup || true' EXIT
+DOCTOR_GROUP_ID=
+DOCTOR_GROUP_LEADER=
+
+doctor_pid_alive() {
+  local pid=${1:-} stat=''
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  stat=$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')
+  case "$stat" in
+    ''|Z*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+doctor_group_alive() {
+  case "${1:-}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  ps -eo pgid=,stat= 2>/dev/null |
+    awk -v group="$1" '$1 == group && $2 !~ /^Z/ { found = 1; exit } END { exit(found ? 0 : 1) }'
+}
+
+cleanup_owned_doctor_group() {
+  local group_id=${DOCTOR_GROUP_ID:-} leader=${DOCTOR_GROUP_LEADER:-}
+  local server_pid=''
+  case "$group_id:$leader" in
+    *[!0-9:]*) return 1 ;;
+    :|*:|:*) return 0 ;;
+  esac
+  [ "$group_id" = "$leader" ] || return 1
+  server_pid=$(cat "${CASE_HERDR_SERVER_PID:-}" 2>/dev/null || true)
+  case "$server_pid" in
+    ''|*[!0-9]*) server_pid= ;;
+  esac
+
+  if doctor_group_alive "$group_id"; then
+    kill -TERM -- "-$group_id" 2>/dev/null || return 1
+    for _ in $(seq 1 20); do
+      doctor_group_alive "$group_id" || break
+      sleep 0.1
+    done
+    if doctor_group_alive "$group_id"; then
+      kill -KILL -- "-$group_id" 2>/dev/null || return 1
+    fi
+  fi
+  wait "$leader" 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    if ! doctor_group_alive "$group_id" \
+      && { [ -z "$server_pid" ] || ! doctor_pid_alive "$server_pid"; }; then
+      DOCTOR_GROUP_ID=
+      DOCTOR_GROUP_LEADER=
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+trap 'if [ -n "$DOCTOR_WORKER_PID" ]; then kill "$DOCTOR_WORKER_PID" 2>/dev/null || true; fi; cleanup_owned_doctor_group >/dev/null 2>&1 || true; fm_test_cleanup || true' EXIT
 
 # A fixture must be able to present a host with NO herdr, so the doctor never
 # sees the runner's own PATH. Only the two required tools are re-exposed, by
@@ -48,11 +107,15 @@ new_case() {
   CASE_LAUNCHCTL_LOG="$CASE_STATE/launchctl.log"
   CASE_FORBIDDEN_LOG="$CASE_STATE/forbidden.log"
   CASE_HERDR_RUNNING="$CASE_STATE/herdr.running"
+  CASE_HERDR_SERVER_PID="$CASE_STATE/herdr.server.pid"
   CASE_PLIST="$CASE_HOME/Library/LaunchAgents/$LABEL.plist"
   CASE_INTERACTIVE_PLIST="$CASE_HOME/Library/LaunchAgents/$INTERACTIVE_LABEL.plist"
   CASE_JOB_PLIST="$CASE_HOME/Library/LaunchAgents/$JOB_LABEL.plist"
   mkdir -p "$CASE_BIN" "$CASE_HOME" "$CASE_PROJECT_HOME" "$CASE_STATE"
   printf 'false\n' > "$CASE_HERDR_RUNNING"
+  : > "$CASE_HERDR_SERVER_PID"
+  CASE_HERDR_FOREGROUND=0
+  CASE_HERDR_NEVER_READY=0
   : > "$CASE_LAUNCHCTL_LOG"
   : > "$CASE_FORBIDDEN_LOG"
   [ "$want_gui" != gui ] || touch "$CASE_STATE/gui-session"
@@ -181,6 +244,13 @@ case "${1:-} ${2:-}" in
     printf '{"client":{"version":"0.7.5","protocol":16},"server":{"running":%s}}\n' "$running"
     ;;
   "server "*|"server ")
+    if [ "${FM_FAKE_HERDR_FOREGROUND:-0}" = 1 ]; then
+      printf '%s\n' "$$" > "$FM_FAKE_HERDR_SERVER_PID"
+      [ "${FM_FAKE_HERDR_NEVER_READY:-0}" = 1 ] \
+        || printf 'true\n' > "$FM_FAKE_HERDR_RUNNING"
+      trap '' TERM
+      exec tail -f /dev/null
+    fi
     printf 'true\n' > "$FM_FAKE_HERDR_RUNNING"
     ;;
 esac
@@ -224,6 +294,9 @@ doctor() {
     FM_FAKE_LAUNCHCTL_LOG="$CASE_LAUNCHCTL_LOG" \
     FM_FAKE_FORBIDDEN_LOG="$CASE_FORBIDDEN_LOG" \
     FM_FAKE_HERDR_RUNNING="$CASE_HERDR_RUNNING" \
+    FM_FAKE_HERDR_FOREGROUND="${CASE_HERDR_FOREGROUND:-0}" \
+    FM_FAKE_HERDR_NEVER_READY="${CASE_HERDR_NEVER_READY:-0}" \
+    FM_FAKE_HERDR_SERVER_PID="$CASE_HERDR_SERVER_PID" \
     FM_FAKE_HERDR_BIN="$CASE_BIN/herdr" \
     FM_FAKE_PLIST="$CASE_PLIST" \
     FM_FAKE_JOB_PLIST="$CASE_JOB_PLIST" \
@@ -515,6 +588,126 @@ assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied:' "--fix did not report 
 assert_contains "$DOCTOR_OUT" 'check herdr-server=ok:' "the started server was not confirmed by the re-check"
 [ ! -s "$CASE_LAUNCHCTL_LOG" ] || fail "the linux path invoked launchctl"
 pass "a non-darwin host skips launch agents and starts its herdr server directly"
+
+# --- Linux doctor must detach or reap its foreground Herdr child -------------
+
+run_doctor_with_watchdog() {
+  local output_file="$CASE_STATE/bounded-doctor.out"
+  local actual_group='' doctor_pid
+  DOCTOR_TIMED_OUT=1
+  DOCTOR_RC=124
+  DOCTOR_OUT=
+  rm -f "$output_file"
+  # The single-quoted script is expanded by the child bash, not this test shell.
+  # shellcheck disable=SC2016
+  HOME="$CASE_HOME" \
+    FM_HOME="$CASE_PROJECT_HOME" \
+    PATH="$CASE_HOME/.local/bin:$CASE_BIN:$BASE_PATH" \
+    FM_FAKE_STATE="$CASE_STATE" \
+    FM_FAKE_LAUNCHCTL_LOG="$CASE_LAUNCHCTL_LOG" \
+    FM_FAKE_FORBIDDEN_LOG="$CASE_FORBIDDEN_LOG" \
+    FM_FAKE_HERDR_RUNNING="$CASE_HERDR_RUNNING" \
+    FM_FAKE_HERDR_FOREGROUND="${CASE_HERDR_FOREGROUND:-0}" \
+    FM_FAKE_HERDR_NEVER_READY="${CASE_HERDR_NEVER_READY:-0}" \
+    FM_FAKE_HERDR_SERVER_PID="$CASE_HERDR_SERVER_PID" \
+    FM_FAKE_HERDR_BIN="$CASE_BIN/herdr" \
+    FM_FAKE_PLIST="$CASE_PLIST" \
+    FM_FAKE_JOB_PLIST="$CASE_JOB_PLIST" \
+    FM_FAKE_JOB_WORKER="$ROOT/bin/fm-remote-job-worker.sh" \
+    FM_FAKE_LAUNCH_AGENT_LOG="$CASE_HOME/Library/Logs/$LABEL.log" \
+    FM_REMOTE_JOB_PLATFORM_OVERRIDE="${CASE_PLATFORM_OVERRIDE-}" \
+    FM_REMOTE_JOB_ACTIVE="${CASE_REMOTE_JOB_ACTIVE-1}" \
+    setsid bash -c '
+      set +e
+      output=$("$1" --fix 2>&1)
+      rc=$?
+      printf "%s" "$output"
+      exit "$rc"
+    ' _ "$ROOT/bin/fm-remote-doctor.sh" > "$output_file" 2>&1 &
+  doctor_pid=$!
+  DOCTOR_GROUP_LEADER=$doctor_pid
+  # `$!` is visible before the child has necessarily completed exec into
+  # setsid. Wait for the kernel PGID transition instead of racing one snapshot.
+  for _ in $(seq 1 100); do
+    actual_group=$(ps -p "$DOCTOR_GROUP_LEADER" -o pgid= 2>/dev/null | tr -d '[:space:]')
+    [ "$actual_group" = "$DOCTOR_GROUP_LEADER" ] && break
+    doctor_pid_alive "$DOCTOR_GROUP_LEADER" || break
+    sleep 0.01
+  done
+  [ "$actual_group" = "$DOCTOR_GROUP_LEADER" ] \
+    || fail "the Linux doctor watchdog did not own a dedicated process group"
+  DOCTOR_GROUP_ID=$actual_group
+
+  for _ in $(seq 1 200); do
+    doctor_pid_alive "$DOCTOR_GROUP_LEADER" || { DOCTOR_TIMED_OUT=0; break; }
+    sleep 0.1
+  done
+  if [ "$DOCTOR_TIMED_OUT" -eq 1 ]; then
+    cleanup_owned_doctor_group \
+      || fail "the Linux doctor watchdog could not reap its owned process group after timeout"
+  fi
+  set +e
+  wait "$doctor_pid" 2>/dev/null
+  DOCTOR_RC=$?
+  set -e
+  [ "$DOCTOR_TIMED_OUT" -eq 0 ] || DOCTOR_RC=124
+  DOCTOR_OUT=$(cat "$output_file")
+}
+
+if [ "$(uname -s)" = Linux ]; then
+  command -v setsid >/dev/null 2>&1 \
+    || fail "the Linux doctor regression requires setsid"
+
+  new_case Linux with-herdr no-gui
+  CASE_HERDR_FOREGROUND=1
+  rm -f "$CASE_BIN/sleep"
+  run_doctor_with_watchdog
+  expect_code 0 "$DOCTOR_TIMED_OUT" \
+    "fm-remote-doctor --fix exceeded its watchdog with a ready foreground Linux Herdr server"
+  expect_code 0 "$DOCTOR_RC" "the bounded Linux doctor run did not complete successfully"
+  assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied:' \
+    "the bounded Linux doctor run did not report starting Herdr"
+  assert_contains "$DOCTOR_OUT" 'check herdr-server=ok:' \
+    "the bounded Linux doctor run did not confirm Herdr readiness"
+  server_pid=$(cat "$CASE_HERDR_SERVER_PID")
+  case "$server_pid" in
+    ''|*[!0-9]*) fail "the bounded Linux doctor run did not leave an owned Herdr server pid" ;;
+  esac
+  doctor_pid_alive "$server_pid" \
+    || fail "the bounded Linux doctor run reported readiness after its Herdr server exited"
+  [ "$(ps -p "$server_pid" -o pgid= 2>/dev/null | tr -d '[:space:]')" = "$DOCTOR_GROUP_ID" ] \
+    || fail "the ready fake Herdr server escaped the watchdog-owned process group"
+  cleanup_owned_doctor_group \
+    || fail "the ready fake Herdr server or its process group survived cleanup"
+  pass "Linux doctor returns while its foreground Herdr server stays ready"
+
+  new_case Linux with-herdr no-gui
+  CASE_HERDR_FOREGROUND=1
+  CASE_HERDR_NEVER_READY=1
+  rm -f "$CASE_BIN/sleep"
+  run_doctor_with_watchdog
+  expect_code 0 "$DOCTOR_TIMED_OUT" \
+    "fm-remote-doctor --fix exceeded its watchdog when Herdr never became ready"
+  expect_code 1 "$DOCTOR_RC" "a never-ready Linux Herdr server did not fail the doctor"
+  assert_contains "$DOCTOR_OUT" 'fix herdr-server=failed:' \
+    "the never-ready Linux doctor run did not report the failed start"
+  assert_contains "$DOCTOR_OUT" 'check herdr-server=fixable:' \
+    "the never-ready Linux doctor run did not preserve the readiness gap"
+  server_pid=$(cat "$CASE_HERDR_SERVER_PID")
+  case "$server_pid" in
+    ''|*[!0-9]*) fail "the never-ready Linux doctor run did not record its owned Herdr server pid" ;;
+  esac
+  if doctor_pid_alive "$server_pid" || doctor_group_alive "$DOCTOR_GROUP_ID"; then
+    cleanup_owned_doctor_group \
+      || fail "the never-ready fake Herdr server survived and fallback cleanup failed"
+    fail "the never-ready fake Herdr server survived the doctor's bounded cleanup"
+  fi
+  cleanup_owned_doctor_group \
+    || fail "the never-ready fake Herdr server or its process group survived cleanup"
+  pass "Linux doctor reaps a foreground Herdr server that never becomes ready"
+else
+  pass "Linux foreground Herdr regression is covered on Linux only"
+fi
 
 # --- --fix may add only owned wrappers for version-manager tools -------------
 
