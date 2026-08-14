@@ -162,16 +162,17 @@ restore_target_command() {
 }
 
 stage_target_command() {
-  printf 'git -C %s --literal-pathspecs add -- %s' \
+  printf 'git -C %s --literal-pathspecs add -f -- %s' \
     "$(shell_quote "$DIR")" \
     "$(shell_quote "$EXPECTED_TARGET")"
 }
 
 commit_branch_tip_command() {
   if [ "$1" = 1 ]; then
-    printf 'git -C %s --literal-pathspecs add -- %s %s && git -C %s --literal-pathspecs commit -m %s -- %s %s' \
+    printf 'git -C %s --literal-pathspecs add -- %s && git -C %s --literal-pathspecs add -f -- %s && git -C %s --literal-pathspecs commit -m %s -- %s %s' \
       "$(shell_quote "$DIR")" \
       "$(shell_quote CLAUDE.md)" \
+      "$(shell_quote "$DIR")" \
       "$(shell_quote "$EXPECTED_TARGET")" \
       "$(shell_quote "$DIR")" \
       "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
@@ -323,6 +324,21 @@ case "$INDEX_TARGET_MODE" in
 esac
 if [ "$INDEX_TARGET_LINES" -ne 1 ] || [ "$INDEX_TARGET_STAGE" != 0 ]; then
   echo "error: the expected target '$EXPECTED_TARGET' has unmerged index entries in $DIR." >&2
+  echo "Stage the target in the index: $(stage_target_command)" >&2
+  exit 1
+fi
+
+INDEX_TREE=$(git -C "$DIR" write-tree 2>/dev/null) || {
+  echo "error: cannot materialize the index as a tree in $DIR." >&2
+  exit 1
+}
+INDEX_TREE_TARGET_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-tree --full-tree "$INDEX_TREE" -- "$EXPECTED_TARGET") || {
+  echo "error: cannot read the expected target '$EXPECTED_TARGET' from the index tree in $DIR" >&2
+  exit 1
+}
+INDEX_TREE_TARGET_LINES=$(printf '%s\n' "$INDEX_TREE_TARGET_ENTRY" | awk 'END {print NR}')
+if [ "$INDEX_TREE_TARGET_LINES" -ne 1 ] || ! tree_entry_is_regular_file "$INDEX_TREE_TARGET_ENTRY"; then
+  echo "error: the expected target '$EXPECTED_TARGET' would not be present as a regular file in the next tree for $DIR." >&2
   echo "Stage the target in the index: $(stage_target_command)" >&2
   exit 1
 fi

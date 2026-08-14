@@ -245,6 +245,35 @@ test_branch_tip_missing_target_fails() {
   pass "fm-claude-symlink-check.sh: branch tips must retain the regular symlink target"
 }
 
+test_branch_tip_recovery_force_adds_ignored_target() {
+  local repo out rc cmd
+  repo="$TMP_ROOT/recovery-ignored-target"
+  fixture_repo "$repo"
+  git -C "$repo" checkout -q -b fm/worker
+  printf 'AGENTS.md\n' > "$repo/.gitignore"
+  git -C "$repo" add .gitignore
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm ignore-target
+  git -C "$repo" rm -q AGENTS.md
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm drop-target
+  printf '# restored agents\n' > "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit while the branch tip omits an ignored target"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
+  [ -n "$cmd" ] || fail "ignored-target recovery did not print a commit command: $out"
+  assert_contains "$cmd" "--literal-pathspecs add -f -- 'AGENTS.md'" \
+    "ignored-target recovery did not force-add the known target"
+  (
+    export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
+    export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
+    eval "$cmd"
+  ) >/dev/null 2>&1 || fail "ignored-target recovery command failed: $cmd"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "expected exit 0 after ignored-target recovery, got $rc: $out"
+  pass "fm-claude-symlink-check.sh: branch-tip recovery force-adds an ignored target"
+}
+
 test_branch_tip_recovery_preserves_target_work() {
   local repo out rc cmd committed staged
   repo="$TMP_ROOT/recovery-preserves-target-work"
@@ -370,7 +399,7 @@ test_index_target_recovery_preserves_worktree_edits() {
   [ "$rc" -ne 0 ] || fail "expected a non-zero exit when the target is missing from the index"
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Stage the target in the index: //p')
   [ -n "$cmd" ] || fail "index-target recovery did not print a staging command: $out"
-  assert_contains "$cmd" "--literal-pathspecs add -- 'AGENTS.md'" \
+  assert_contains "$cmd" "--literal-pathspecs add -f -- 'AGENTS.md'" \
     "index-target recovery did not use a literal git add"
   eval "$cmd" >/dev/null 2>&1 || fail "index-target staging command failed: $cmd"
   [ "$(cat "$repo/AGENTS.md")" = '# edited target' ] || fail "index-target recovery overwrote worktree edits"
@@ -378,6 +407,26 @@ test_index_target_recovery_preserves_worktree_edits() {
   rc=$?
   [ "$rc" -eq 0 ] || fail "expected exit 0 after staging the edited target, got $rc: $out"
   pass "fm-claude-symlink-check.sh: index-target recovery preserves worktree edits"
+}
+
+test_index_rejects_intent_to_add_target() {
+  local repo out rc cmd
+  repo="$TMP_ROOT/index-intent-to-add"
+  fixture_repo "$repo"
+  git -C "$repo" rm --cached -q AGENTS.md
+  git -C "$repo" add -N AGENTS.md
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit for an intent-to-add target"
+  assert_contains "$out" "would not be present as a regular file in the next tree" \
+    "intent-to-add target was not rejected as absent from the next tree"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Stage the target in the index: //p')
+  [ -n "$cmd" ] || fail "intent-to-add target did not print a staging command: $out"
+  eval "$cmd" >/dev/null 2>&1 || fail "intent-to-add recovery command failed: $cmd"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "expected exit 0 after replacing the intent-to-add entry, got $rc: $out"
+  pass "fm-claude-symlink-check.sh: intent-to-add targets fail closed"
 }
 
 test_recovery_commands_quote_repository_operands() {
@@ -539,12 +588,14 @@ test_uncommitted_restore_still_fails
 test_branch_tip_recovery_command_works_from_every_restore_path
 test_branch_tip_dropping_claude_md_fails
 test_branch_tip_missing_target_fails
+test_branch_tip_recovery_force_adds_ignored_target
 test_branch_tip_recovery_preserves_target_work
 test_branch_tip_recovery_restores_missing_target_for_regular_claude
 test_worktree_target_must_be_regular_file
 test_index_rejects_staged_claude_deletion
 test_index_rejects_staged_target_deletion
 test_index_target_recovery_preserves_worktree_edits
+test_index_rejects_intent_to_add_target
 test_recovery_commands_quote_repository_operands
 test_recovery_target_pathspecs_are_literal
 test_repo_without_symlink_policy_skips
