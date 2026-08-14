@@ -68,10 +68,6 @@ resolve_base() {
         printf 'origin/%s\n' "$name"
         return 0
       fi
-      if git -C "$DIR" show-ref --verify --quiet "refs/heads/$name"; then
-        printf '%s\n' "$name"
-        return 0
-      fi
       ;;
   esac
   for b in main master; do
@@ -79,6 +75,8 @@ resolve_base() {
       printf 'origin/%s\n' "$b"
       return 0
     fi
+  done
+  for b in main master; do
     if git -C "$DIR" show-ref --verify --quiet "refs/heads/$b"; then
       printf '%s\n' "$b"
       return 0
