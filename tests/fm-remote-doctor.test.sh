@@ -23,11 +23,24 @@ DOCTOR_WORKER_PID=
 DOCTOR_GROUP_ID=
 DOCTOR_GROUP_LEADER=
 
+doctor_pid_alive() {
+  local pid=${1:-} stat=''
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  stat=$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')
+  case "$stat" in
+    ''|Z*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 doctor_group_alive() {
   case "${1:-}" in
     ''|*[!0-9]*) return 1 ;;
   esac
-  kill -0 -- "-$1" 2>/dev/null
+  ps -eo pgid=,stat= 2>/dev/null |
+    awk -v group="$1" '$1 == group && $2 !~ /^Z/ { found = 1; exit } END { exit(found ? 0 : 1) }'
 }
 
 cleanup_owned_doctor_group() {
@@ -56,7 +69,7 @@ cleanup_owned_doctor_group() {
   wait "$leader" 2>/dev/null || true
   for _ in $(seq 1 50); do
     if ! doctor_group_alive "$group_id" \
-      && { [ -z "$server_pid" ] || ! kill -0 "$server_pid" 2>/dev/null; }; then
+      && { [ -z "$server_pid" ] || ! doctor_pid_alive "$server_pid"; }; then
       DOCTOR_GROUP_ID=
       DOCTOR_GROUP_LEADER=
       return 0
@@ -619,7 +632,7 @@ run_doctor_with_watchdog() {
   DOCTOR_GROUP_ID=$actual_group
 
   for _ in $(seq 1 200); do
-    kill -0 "$DOCTOR_GROUP_LEADER" 2>/dev/null || { DOCTOR_TIMED_OUT=0; break; }
+    doctor_pid_alive "$DOCTOR_GROUP_LEADER" || { DOCTOR_TIMED_OUT=0; break; }
     sleep 0.1
   done
   if [ "$DOCTOR_TIMED_OUT" -eq 1 ]; then
@@ -653,7 +666,7 @@ if [ "$(uname -s)" = Linux ]; then
   case "$server_pid" in
     ''|*[!0-9]*) fail "the bounded Linux doctor run did not leave an owned Herdr server pid" ;;
   esac
-  kill -0 "$server_pid" 2>/dev/null \
+  doctor_pid_alive "$server_pid" \
     || fail "the bounded Linux doctor run reported readiness after its Herdr server exited"
   [ "$(ps -p "$server_pid" -o pgid= 2>/dev/null | tr -d '[:space:]')" = "$DOCTOR_GROUP_ID" ] \
     || fail "the ready fake Herdr server escaped the watchdog-owned process group"
@@ -677,7 +690,7 @@ if [ "$(uname -s)" = Linux ]; then
   case "$server_pid" in
     ''|*[!0-9]*) fail "the never-ready Linux doctor run did not record its owned Herdr server pid" ;;
   esac
-  if kill -0 "$server_pid" 2>/dev/null || doctor_group_alive "$DOCTOR_GROUP_ID"; then
+  if doctor_pid_alive "$server_pid" || doctor_group_alive "$DOCTOR_GROUP_ID"; then
     cleanup_owned_doctor_group \
       || fail "the never-ready fake Herdr server survived and fallback cleanup failed"
     fail "the never-ready fake Herdr server survived the doctor's bounded cleanup"
