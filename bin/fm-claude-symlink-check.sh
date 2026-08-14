@@ -155,30 +155,21 @@ restore_claude_command() {
 }
 
 restore_target_command() {
-  printf 'git -C %s checkout %s -- %s' \
+  printf 'git -C %s --literal-pathspecs checkout %s -- %s' \
     "$(shell_quote "$DIR")" \
     "$(shell_quote "$BASE")" \
     "$(shell_quote "$EXPECTED_TARGET")"
 }
 
 commit_branch_tip_command() {
-  if [ "$1" = 1 ]; then
-    printf 'git -C %s add -- %s %s && git -C %s commit -m %s -- %s %s' \
-      "$(shell_quote "$DIR")" \
-      "$(shell_quote CLAUDE.md)" \
-      "$(shell_quote "$EXPECTED_TARGET")" \
-      "$(shell_quote "$DIR")" \
-      "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
-      "$(shell_quote CLAUDE.md)" \
-      "$(shell_quote "$EXPECTED_TARGET")"
-  else
-    printf 'git -C %s add -- %s && git -C %s commit -m %s -- %s' \
-      "$(shell_quote "$DIR")" \
-      "$(shell_quote CLAUDE.md)" \
-      "$(shell_quote "$DIR")" \
-      "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
-      "$(shell_quote CLAUDE.md)"
-  fi
+  printf 'git -C %s --literal-pathspecs add -- %s %s && git -C %s --literal-pathspecs commit -m %s -- %s %s' \
+    "$(shell_quote "$DIR")" \
+    "$(shell_quote CLAUDE.md)" \
+    "$(shell_quote "$EXPECTED_TARGET")" \
+    "$(shell_quote "$DIR")" \
+    "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
+    "$(shell_quote CLAUDE.md)" \
+    "$(shell_quote "$EXPECTED_TARGET")"
 }
 
 if [ ! -e "$CLAUDE" ] && [ ! -L "$CLAUDE" ]; then
@@ -204,6 +195,15 @@ if [ ! -e "$CLAUDE" ]; then
   echo "Restore the target: $(restore_target_command)" >&2
   exit 1
 fi
+case "$EXPECTED_TARGET" in
+  /*) WORKTREE_TARGET_PATH=$EXPECTED_TARGET ;;
+  *) WORKTREE_TARGET_PATH="$DIR/$EXPECTED_TARGET" ;;
+esac
+if [ ! -f "$WORKTREE_TARGET_PATH" ] || [ -L "$WORKTREE_TARGET_PATH" ]; then
+  echo "error: the expected target '$EXPECTED_TARGET' in $DIR is not a regular non-symlink file." >&2
+  echo "Restore the target: $(restore_target_command)" >&2
+  exit 1
+fi
 
 # What reaches a PR is the committed branch tip, not the working tree: a restore
 # that is left uncommitted keeps the "distinct types on each side" conflict.
@@ -213,7 +213,6 @@ if git -C "$DIR" rev-parse --verify --quiet HEAD >/dev/null; then
     exit 1
   }
   HEAD_PROBLEM=
-  HEAD_NEEDS_TARGET=0
   if [ -z "$HEAD_ENTRY" ]; then
     HEAD_PROBLEM="drops CLAUDE.md entirely"
   else
@@ -235,7 +234,6 @@ if git -C "$DIR" rev-parse --verify --quiet HEAD >/dev/null; then
         }
         if ! tree_entry_is_regular_file "$HEAD_TARGET_ENTRY"; then
           HEAD_PROBLEM="does not carry the expected target '$EXPECTED_TARGET' as a regular file"
-          HEAD_NEEDS_TARGET=1
         fi
       fi
     fi
@@ -243,7 +241,7 @@ if git -C "$DIR" rev-parse --verify --quiet HEAD >/dev/null; then
   if [ -n "$HEAD_PROBLEM" ]; then
     echo "error: the working tree is fine, but your branch tip $HEAD_PROBLEM, while $BASE manages it as a symlink -> $EXPECTED_TARGET." >&2
     echo "That is what a PR would carry, so the 'distinct types on each side' conflict would come back." >&2
-    echo "Commit the restored symlink: $(commit_branch_tip_command "$HEAD_NEEDS_TARGET")" >&2
+    echo "Commit the restored symlink: $(commit_branch_tip_command)" >&2
     exit 1
   fi
 fi

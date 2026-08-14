@@ -233,6 +233,7 @@ test_branch_tip_missing_target_fails() {
   assert_contains "$out" "expected target" "missing branch-tip target was not named"
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
   [ -n "$cmd" ] || fail "missing-target branch tip did not print a recovery commit command: $out"
+  assert_contains "$cmd" "'AGENTS.md'" "branch-tip recovery did not include the missing target"
   (
     export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
     export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
@@ -242,6 +243,29 @@ test_branch_tip_missing_target_fails() {
   rc=$?
   [ "$rc" -eq 0 ] || fail "expected exit 0 after restoring and committing the target, got $rc: $out"
   pass "fm-claude-symlink-check.sh: branch tips must retain the regular symlink target"
+}
+
+test_worktree_target_must_be_regular_file() {
+  local repo out rc
+  repo="$TMP_ROOT/target-directory"
+  fixture_repo "$repo"
+  rm "$repo/AGENTS.md"
+  mkdir "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit when the symlink target is a directory"
+  assert_contains "$out" "regular non-symlink file" "directory target was not rejected"
+
+  repo="$TMP_ROOT/target-symlink"
+  fixture_repo "$repo"
+  rm "$repo/AGENTS.md"
+  printf '# other\n' > "$repo/OTHER.md"
+  ln -s OTHER.md "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit when the symlink target is another symlink"
+  assert_contains "$out" "regular non-symlink file" "symlink target was not rejected"
+  pass "fm-claude-symlink-check.sh: the worktree target must be a regular non-symlink file"
 }
 
 test_index_rejects_staged_claude_deletion() {
@@ -305,6 +329,54 @@ test_recovery_commands_quote_repository_operands() {
   [ -L "$repo/CLAUDE.md" ] || fail "quoted ln recovery command did not restore the symlink"
   [ "$(readlink "$repo/CLAUDE.md")" = "$target" ] || fail "quoted ln recovery command changed the symlink target"
   pass "fm-claude-symlink-check.sh: recovery commands quote every repository-controlled operand"
+}
+
+test_recovery_target_pathspecs_are_literal() {
+  local repo target decoy out rc cmd committed
+  repo="$TMP_ROOT/recovery-literal-pathspec"
+  target='AGENTS*.md'
+  decoy='AGENTS-other.md'
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  printf '# agents\n' > "$repo/$target"
+  printf '# decoy\n' > "$repo/$decoy"
+  ( cd "$repo" && ln -s "$target" CLAUDE.md )
+  git -C "$repo" --literal-pathspecs add -- "$target" "$decoy" CLAUDE.md
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
+  git -C "$repo" branch -M main
+  git -C "$repo" checkout -q -b fm/worker
+
+  git -C "$repo" --literal-pathspecs rm -q -- "$target"
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm drop-target
+  printf '# agents restored\n' > "$repo/$target"
+  git -C "$repo" --literal-pathspecs add -- "$target"
+  printf 'working copy\n' > "$repo/$decoy"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a branch-tip failure for the missing wildcard target"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
+  [ -n "$cmd" ] || fail "missing wildcard target did not print a commit recovery command: $out"
+  (
+    export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
+    export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
+    eval "$cmd"
+  ) >/dev/null 2>&1 || fail "literal-pathspec commit recovery command failed: $cmd"
+  committed=$(git -C "$repo" show --name-only --format= HEAD)
+  case "$committed" in
+    *"$decoy"*) fail "literal-pathspec commit recovery swept in the decoy: $committed" ;;
+  esac
+  [ "$(cat "$repo/$decoy")" = 'working copy' ] || fail "literal-pathspec commit recovery changed the decoy"
+
+  rm "$repo/$target"
+  printf 'working copy after restore\n' > "$repo/$decoy"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a worktree failure for the missing wildcard target"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Restore the target: //p')
+  [ -n "$cmd" ] || fail "missing wildcard target did not print a target recovery command: $out"
+  eval "$cmd" >/dev/null 2>&1 || fail "literal-pathspec checkout recovery command failed: $cmd"
+  [ "$(cat "$repo/$decoy")" = 'working copy after restore' ] || fail "literal-pathspec checkout recovery changed the decoy"
+  pass "fm-claude-symlink-check.sh: generated Git recovery commands use literal target pathspecs"
 }
 
 test_repo_without_symlink_policy_skips() {
@@ -380,9 +452,11 @@ test_uncommitted_restore_still_fails
 test_branch_tip_recovery_command_works_from_every_restore_path
 test_branch_tip_dropping_claude_md_fails
 test_branch_tip_missing_target_fails
+test_worktree_target_must_be_regular_file
 test_index_rejects_staged_claude_deletion
 test_index_rejects_staged_target_deletion
 test_recovery_commands_quote_repository_operands
+test_recovery_target_pathspecs_are_literal
 test_repo_without_symlink_policy_skips
 test_repo_without_claude_md_at_all_skips
 test_auto_detects_origin_default_branch

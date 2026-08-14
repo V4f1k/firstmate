@@ -372,18 +372,23 @@ test_ship_project_memory_wording() {
 }
 
 test_ship_repo_hygiene_check_renders_in_every_mode() {
-  local home mode id brief
+  local home mode id brief foreign_root quoted_guard
   home="$TMP_ROOT/repo-hygiene-home"
+  foreign_root="$TMP_ROOT/firstmate helper's root"
+  quoted_guard=$(printf '%s' "$foreign_root/bin/fm-claude-symlink-check.sh" | sed "s/'/'\\\\''/g")
+  quoted_guard="'$quoted_guard'"
   mkdir -p "$home/data"
   for mode in no-mistakes direct-PR local-only; do
     id="brief-hygiene-$mode"
-    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$foreign_root" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$mode: brief was not scaffolded"
     assert_grep "# Repo hygiene check" "$brief" \
       "$mode: brief missing the repo hygiene check section"
-    assert_grep "bin/fm-claude-symlink-check.sh ." "$brief" \
+    assert_grep "fm-claude-symlink-check.sh" "$brief" \
       "$mode: brief does not tell the worker to run fm-claude-symlink-check.sh"
+    assert_grep "run \`$quoted_guard .\`" "$brief" \
+      "$mode: brief does not shell-quote the hygiene-check executable path"
     assert_grep "run the recovery command it prints, then re-run the check until it passes" "$brief" \
       "$mode: brief lost the recovery-and-recheck instruction"
     assert_grep "a restore only counts once you commit it" "$brief" \
