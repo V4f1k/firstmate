@@ -626,7 +626,14 @@ run_doctor_with_watchdog() {
     ' _ "$ROOT/bin/fm-remote-doctor.sh" > "$output_file" 2>&1 &
   doctor_pid=$!
   DOCTOR_GROUP_LEADER=$doctor_pid
-  actual_group=$(ps -p "$DOCTOR_GROUP_LEADER" -o pgid= 2>/dev/null | tr -d '[:space:]')
+  # `$!` is visible before the child has necessarily completed exec into
+  # setsid. Wait for the kernel PGID transition instead of racing one snapshot.
+  for _ in $(seq 1 100); do
+    actual_group=$(ps -p "$DOCTOR_GROUP_LEADER" -o pgid= 2>/dev/null | tr -d '[:space:]')
+    [ "$actual_group" = "$DOCTOR_GROUP_LEADER" ] && break
+    doctor_pid_alive "$DOCTOR_GROUP_LEADER" || break
+    sleep 0.01
+  done
   [ "$actual_group" = "$DOCTOR_GROUP_LEADER" ] \
     || fail "the Linux doctor watchdog did not own a dedicated process group"
   DOCTOR_GROUP_ID=$actual_group
