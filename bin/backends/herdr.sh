@@ -1442,11 +1442,6 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
   return 0
 }
 
-# fm_backend_herdr_server_ensure: start the herdr server for <session>
-# headless (no TUI client) if not already running, mirroring tmux's `tmux
-# has-session || tmux new-session -d`. Verified: a bare socket CLI call does
-# NOT auto-start the server, so this must run before any workspace/tab/pane
-# call. Bounded poll for the server to report running.
 # Bash command substitutions may expose their result pipe on a descriptor above
 # 2, so the server child closes every inherited non-stdio descriptor before exec.
 fm_backend_herdr_close_inherited_fds() {
@@ -1460,6 +1455,13 @@ fm_backend_herdr_close_inherited_fds() {
   done
 }
 
+# fm_backend_herdr_server_ensure: start the herdr server for <session>
+# headless (no TUI client) if not already running, mirroring tmux's `tmux
+# has-session || tmux new-session -d`. Verified: a bare socket CLI call does
+# NOT auto-start the server, so this must run before any workspace/tab/pane
+# call. Bounded poll for the server to report running.
+# A readiness failure terminates and reaps only the direct start child; successful
+# readiness leaves the server running without adding general liveness ownership.
 fm_backend_herdr_server_ensure() {  # <session>
   local session=$1 running i start_pid
   running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
