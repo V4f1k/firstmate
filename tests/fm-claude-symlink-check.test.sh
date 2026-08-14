@@ -43,8 +43,8 @@ test_regular_file_fails_with_recovery_commands() {
   [ "$rc" -ne 0 ] || fail "expected a non-zero exit when CLAUDE.md is a regular file"
   assert_contains "$out" "error:" "regular-file breakage did not report an error"
   assert_contains "$out" "regular file" "error did not name the actual problem"
-  assert_contains "$out" "checkout main -- CLAUDE.md" "error did not include the git checkout recovery command"
-  assert_contains "$out" "ln -sfn AGENTS.md" "error did not include the ln -sfn recovery command"
+  assert_contains "$out" "checkout 'main' -- 'CLAUDE.md'" "error did not include the git checkout recovery command"
+  assert_contains "$out" "ln -sfn -- 'AGENTS.md'" "error did not include the ln -sfn recovery command"
   pass "fm-claude-symlink-check.sh: CLAUDE.md demoted to a regular file fails with recovery commands"
 }
 
@@ -84,7 +84,7 @@ test_dangling_symlink_fails() {
   rc=$?
   [ "$rc" -ne 0 ] || fail "expected a non-zero exit when CLAUDE.md dangles, got: $out"
   assert_contains "$out" "dangling symlink" "dangling CLAUDE.md was not reported as dangling"
-  assert_contains "$out" "checkout main -- 'AGENTS.md'" "error did not include the target-restore command"
+  assert_contains "$out" "checkout 'main' -- 'AGENTS.md'" "error did not include the target-restore command"
   pass "fm-claude-symlink-check.sh: dangling CLAUDE.md symlink fails"
 }
 
@@ -198,6 +198,7 @@ test_branch_tip_recovery_command_works_from_every_restore_path() {
   assert_branch_tip_recovery demoted-tip-symlink-restore demote ln
   assert_branch_tip_recovery dropped-tip-checkout-restore drop checkout
   assert_branch_tip_recovery dropped-tip-symlink-restore drop ln
+  assert_branch_tip_recovery "quoted-'dir" demote checkout
   pass "fm-claude-symlink-check.sh: the printed recovery command commits only CLAUDE.md from every restore path"
 }
 
@@ -216,6 +217,96 @@ test_branch_tip_dropping_claude_md_fails() {
   pass "fm-claude-symlink-check.sh: a branch tip that dropped CLAUDE.md fails"
 }
 
+test_branch_tip_missing_target_fails() {
+  local repo out rc cmd
+  repo="$TMP_ROOT/tip-missing-target"
+  fixture_repo "$repo"
+  git -C "$repo" checkout -q -b fm/worker
+  git -C "$repo" rm -q AGENTS.md
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm drop-target
+  printf '# agents\n' > "$repo/AGENTS.md"
+  git -C "$repo" add AGENTS.md
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit when the branch tip drops the symlink target, got: $out"
+  assert_contains "$out" "branch tip" "missing branch-tip target was not reported"
+  assert_contains "$out" "expected target" "missing branch-tip target was not named"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
+  [ -n "$cmd" ] || fail "missing-target branch tip did not print a recovery commit command: $out"
+  (
+    export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
+    export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
+    eval "$cmd"
+  ) >/dev/null 2>&1 || fail "missing-target recovery command failed: $cmd"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "expected exit 0 after restoring and committing the target, got $rc: $out"
+  pass "fm-claude-symlink-check.sh: branch tips must retain the regular symlink target"
+}
+
+test_index_rejects_staged_claude_deletion() {
+  local repo out rc
+  repo="$TMP_ROOT/index-claude-deletion"
+  fixture_repo "$repo"
+  git -C "$repo" rm --cached -q CLAUDE.md
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit when CLAUDE.md is deleted from the index"
+  assert_contains "$out" "index" "staged CLAUDE.md deletion was not reported as an index problem"
+  pass "fm-claude-symlink-check.sh: staged CLAUDE.md deletion fails"
+}
+
+test_index_rejects_staged_target_deletion() {
+  local repo out rc
+  repo="$TMP_ROOT/index-target-deletion"
+  fixture_repo "$repo"
+  git -C "$repo" rm --cached -q AGENTS.md
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit when the symlink target is deleted from the index"
+  assert_contains "$out" "target" "staged target deletion was not reported"
+  assert_contains "$out" "index" "staged target deletion was not reported as an index problem"
+  pass "fm-claude-symlink-check.sh: staged symlink-target deletion fails"
+}
+
+test_recovery_commands_quote_repository_operands() {
+  local repo base target out rc checkout_cmd ln_cmd
+  repo="$TMP_ROOT/recovery-special-'dir"
+  base='base;touch'
+  target='AGENTS;touch'
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  printf '# agents\n' > "$repo/$target"
+  ( cd "$repo" && ln -s "$target" CLAUDE.md )
+  git -C "$repo" add -- "$target" CLAUDE.md
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
+  git -C "$repo" branch -M main
+  git -C "$repo" branch "$base"
+  git -C "$repo" checkout -q -b fm/worker
+
+  rm "$repo/CLAUDE.md"
+  printf 'stale content\n' > "$repo/CLAUDE.md"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" "$base" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit for special recovery operands"
+  checkout_cmd=$(printf '%s\n' "$out" | sed -n 's/^Restore it: //; s/   (or:.*$//p')
+  [ -n "$checkout_cmd" ] || fail "special-operand check did not print a checkout recovery command: $out"
+  eval "$checkout_cmd" >/dev/null 2>&1 || fail "quoted checkout recovery command failed: $checkout_cmd"
+  [ -L "$repo/CLAUDE.md" ] || fail "quoted checkout recovery command did not restore the symlink"
+
+  rm "$repo/CLAUDE.md"
+  printf 'stale content\n' > "$repo/CLAUDE.md"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" "$base" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit for special symlink recovery operands"
+  ln_cmd=$(printf '%s\n' "$out" | sed -n 's/^Restore it: .*   (or: //; s/)$//p')
+  [ -n "$ln_cmd" ] || fail "special-operand check did not print an ln recovery command: $out"
+  eval "$ln_cmd" >/dev/null 2>&1 || fail "quoted ln recovery command failed: $ln_cmd"
+  [ -L "$repo/CLAUDE.md" ] || fail "quoted ln recovery command did not restore the symlink"
+  [ "$(readlink "$repo/CLAUDE.md")" = "$target" ] || fail "quoted ln recovery command changed the symlink target"
+  pass "fm-claude-symlink-check.sh: recovery commands quote every repository-controlled operand"
+}
+
 test_repo_without_symlink_policy_skips() {
   local repo out rc
   repo="$TMP_ROOT/no-policy"
@@ -228,7 +319,7 @@ test_repo_without_symlink_policy_skips() {
   out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
   rc=$?
   [ "$rc" -eq 0 ] || fail "expected exit 0 for a repo without a CLAUDE.md symlink policy, got $rc: $out"
-  assert_contains "$out" "skip:" "repo without a symlink policy did not report skip"
+  [ -z "$out" ] || fail "repo without a symlink policy was not silent: $out"
   pass "fm-claude-symlink-check.sh: repo without a CLAUDE.md symlink policy skips silently"
 }
 
@@ -240,7 +331,7 @@ test_repo_without_claude_md_at_all_skips() {
   out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" main 2>&1)
   rc=$?
   [ "$rc" -eq 0 ] || fail "expected exit 0 for a repo with no CLAUDE.md at all, got $rc: $out"
-  assert_contains "$out" "skip:" "repo without any CLAUDE.md did not report skip"
+  [ -z "$out" ] || fail "repo without any CLAUDE.md was not silent: $out"
   pass "fm-claude-symlink-check.sh: repo with no CLAUDE.md at all skips silently"
 }
 
@@ -261,6 +352,23 @@ test_auto_detects_origin_default_branch() {
   pass "fm-claude-symlink-check.sh: auto-detects the origin default branch when no base-ref is given"
 }
 
+test_dangling_origin_head_falls_back_to_available_default() {
+  local repo bare out rc
+  repo="$TMP_ROOT/dangling-origin-head"
+  bare="$TMP_ROOT/dangling-origin-head-bare"
+  fixture_repo "$repo"
+  fm_git_add_origin "$repo" "$bare"
+  git -C "$repo" fetch --quiet origin
+  git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/stale
+  rm "$repo/CLAUDE.md"
+  printf 'stale content\n' > "$repo/CLAUDE.md"
+  out=$("$ROOT/bin/fm-claude-symlink-check.sh" "$repo" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit after falling back from a dangling origin/HEAD"
+  assert_contains "$out" "origin/main" "dangling origin/HEAD did not fall back to origin/main"
+  pass "fm-claude-symlink-check.sh: a dangling origin/HEAD falls back to an available default"
+}
+
 test_matching_symlink_passes
 test_regular_file_fails_with_recovery_commands
 test_missing_claude_md_fails
@@ -271,6 +379,11 @@ test_unknown_base_ref_errors
 test_uncommitted_restore_still_fails
 test_branch_tip_recovery_command_works_from_every_restore_path
 test_branch_tip_dropping_claude_md_fails
+test_branch_tip_missing_target_fails
+test_index_rejects_staged_claude_deletion
+test_index_rejects_staged_target_deletion
+test_recovery_commands_quote_repository_operands
 test_repo_without_symlink_policy_skips
 test_repo_without_claude_md_at_all_skips
 test_auto_detects_origin_default_branch
+test_dangling_origin_head_falls_back_to_available_default

@@ -55,36 +55,39 @@ DIR=$(cd "$TOPLEVEL" && pwd -P)
 EXPLICIT_BASE=${2:-}
 
 resolve_base() {
-  local name b
+  local ref name b
   if [ -n "$EXPLICIT_BASE" ]; then
     printf '%s\n' "$EXPLICIT_BASE"
     return 0
   fi
-  name=$(git -C "$DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  name=${name#origin/}
-  if [ -z "$name" ]; then
-    for b in main master; do
-      if git -C "$DIR" show-ref --verify --quiet "refs/remotes/origin/$b" ||
-        git -C "$DIR" show-ref --verify --quiet "refs/heads/$b"; then
-        name=$b
-        break
+  ref=$(git -C "$DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  case "$ref" in
+    origin/*)
+      name=${ref#origin/}
+      if git -C "$DIR" show-ref --verify --quiet "refs/remotes/origin/$name"; then
+        printf 'origin/%s\n' "$name"
+        return 0
       fi
-    done
-  fi
-  [ -n "$name" ] || return 1
-  if git -C "$DIR" show-ref --verify --quiet "refs/remotes/origin/$name"; then
-    printf 'origin/%s\n' "$name"
-    return 0
-  fi
-  if git -C "$DIR" show-ref --verify --quiet "refs/heads/$name"; then
-    printf '%s\n' "$name"
-    return 0
-  fi
+      if git -C "$DIR" show-ref --verify --quiet "refs/heads/$name"; then
+        printf '%s\n' "$name"
+        return 0
+      fi
+      ;;
+  esac
+  for b in main master; do
+    if git -C "$DIR" show-ref --verify --quiet "refs/remotes/origin/$b"; then
+      printf 'origin/%s\n' "$b"
+      return 0
+    fi
+    if git -C "$DIR" show-ref --verify --quiet "refs/heads/$b"; then
+      printf '%s\n' "$b"
+      return 0
+    fi
+  done
   return 1
 }
 
 BASE=$(resolve_base) || {
-  echo "skip: cannot determine a base branch to compare CLAUDE.md against in $DIR"
   exit 0
 }
 
@@ -99,41 +102,106 @@ BASE_ENTRY=$(git -C "$DIR" ls-tree --full-tree "$BASE" -- CLAUDE.md) || {
   exit 1
 }
 if [ -z "$BASE_ENTRY" ]; then
-  echo "skip: $BASE has no CLAUDE.md in $DIR; nothing to guard"
   exit 0
 fi
 BASE_MODE=$(printf '%s\n' "$BASE_ENTRY" | awk '{print $1}')
 BASE_BLOB=$(printf '%s\n' "$BASE_ENTRY" | awk '{print $3}')
 
 if [ "$BASE_MODE" != 120000 ]; then
-  echo "skip: CLAUDE.md in $BASE is not a symlink in $DIR (mode $BASE_MODE); nothing to guard"
   exit 0
 fi
 
-EXPECTED_TARGET=$(git -C "$DIR" cat-file -p "$BASE_BLOB")
+EXPECTED_TARGET=$(git -C "$DIR" cat-file -p "$BASE_BLOB") || {
+  echo "error: cannot read the CLAUDE.md symlink target out of '$BASE' in $DIR" >&2
+  exit 1
+}
+
+tree_entry_is_regular_file() {
+  local entry=$1 mode type
+  [ -n "$entry" ] || return 1
+  mode=$(printf '%s\n' "$entry" | awk '{print $1}')
+  type=$(printf '%s\n' "$entry" | awk '{print $2}')
+  [ "$type" = blob ] || return 1
+  case "$mode" in
+    100*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+BASE_TARGET_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-tree --full-tree "$BASE" -- "$EXPECTED_TARGET") || {
+  echo "error: cannot read the expected target '$EXPECTED_TARGET' out of '$BASE' in $DIR" >&2
+  exit 1
+}
+if ! tree_entry_is_regular_file "$BASE_TARGET_ENTRY"; then
+  echo "error: the expected target '$EXPECTED_TARGET' is not a regular file in '$BASE' in $DIR" >&2
+  exit 1
+fi
 
 CLAUDE="$DIR/CLAUDE.md"
+
+shell_quote() {
+  local value=$1
+  value=${value//\'/\'\\\'\'}
+  printf "'%s'" "$value"
+}
+
+restore_claude_command() {
+  printf 'git -C %s checkout %s -- %s   (or: ln -sfn -- %s %s)' \
+    "$(shell_quote "$DIR")" \
+    "$(shell_quote "$BASE")" \
+    "$(shell_quote CLAUDE.md)" \
+    "$(shell_quote "$EXPECTED_TARGET")" \
+    "$(shell_quote "$CLAUDE")"
+}
+
+restore_target_command() {
+  printf 'git -C %s checkout %s -- %s' \
+    "$(shell_quote "$DIR")" \
+    "$(shell_quote "$BASE")" \
+    "$(shell_quote "$EXPECTED_TARGET")"
+}
+
+commit_branch_tip_command() {
+  if [ "$1" = 1 ]; then
+    printf 'git -C %s add -- %s %s && git -C %s commit -m %s -- %s %s' \
+      "$(shell_quote "$DIR")" \
+      "$(shell_quote CLAUDE.md)" \
+      "$(shell_quote "$EXPECTED_TARGET")" \
+      "$(shell_quote "$DIR")" \
+      "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
+      "$(shell_quote CLAUDE.md)" \
+      "$(shell_quote "$EXPECTED_TARGET")"
+  else
+    printf 'git -C %s add -- %s && git -C %s commit -m %s -- %s' \
+      "$(shell_quote "$DIR")" \
+      "$(shell_quote CLAUDE.md)" \
+      "$(shell_quote "$DIR")" \
+      "$(shell_quote 'fix: restore the CLAUDE.md symlink')" \
+      "$(shell_quote CLAUDE.md)"
+  fi
+}
+
 if [ ! -e "$CLAUDE" ] && [ ! -L "$CLAUDE" ]; then
   echo "error: CLAUDE.md is missing in $DIR, but $BASE manages it as a symlink -> $EXPECTED_TARGET." >&2
-  echo "Restore it: git -C '$DIR' checkout $BASE -- CLAUDE.md   (or: ln -sfn $EXPECTED_TARGET '$CLAUDE')" >&2
+  echo "Restore it: $(restore_claude_command)" >&2
   exit 1
 fi
 if [ ! -L "$CLAUDE" ]; then
   echo "error: CLAUDE.md in $DIR is a regular file, but $BASE manages it as a symlink -> $EXPECTED_TARGET." >&2
   echo "This is the classic 'distinct types on each side' merge fallout: a pre-conversion branch clobbered the symlink." >&2
-  echo "Restore it: git -C '$DIR' checkout $BASE -- CLAUDE.md   (or: ln -sfn $EXPECTED_TARGET '$CLAUDE')" >&2
+  echo "Restore it: $(restore_claude_command)" >&2
   exit 1
 fi
 
 ACTUAL_TARGET=$(readlink "$CLAUDE")
 if [ "$ACTUAL_TARGET" != "$EXPECTED_TARGET" ]; then
   echo "error: CLAUDE.md in $DIR is a symlink to '$ACTUAL_TARGET', but $BASE expects '$EXPECTED_TARGET'." >&2
-  echo "Restore it: git -C '$DIR' checkout $BASE -- CLAUDE.md   (or: ln -sfn $EXPECTED_TARGET '$CLAUDE')" >&2
+  echo "Restore it: $(restore_claude_command)" >&2
   exit 1
 fi
 if [ ! -e "$CLAUDE" ]; then
   echo "error: CLAUDE.md in $DIR is a dangling symlink: its target '$EXPECTED_TARGET' does not exist." >&2
-  echo "Restore the target: git -C '$DIR' checkout $BASE -- '$EXPECTED_TARGET'" >&2
+  echo "Restore the target: $(restore_target_command)" >&2
   exit 1
 fi
 
@@ -145,6 +213,7 @@ if git -C "$DIR" rev-parse --verify --quiet HEAD >/dev/null; then
     exit 1
   }
   HEAD_PROBLEM=
+  HEAD_NEEDS_TARGET=0
   if [ -z "$HEAD_ENTRY" ]; then
     HEAD_PROBLEM="drops CLAUDE.md entirely"
   else
@@ -153,18 +222,94 @@ if git -C "$DIR" rev-parse --verify --quiet HEAD >/dev/null; then
     if [ "$HEAD_MODE" != 120000 ]; then
       HEAD_PROBLEM="still carries CLAUDE.md as a regular file (mode $HEAD_MODE)"
     else
-      HEAD_TARGET=$(git -C "$DIR" cat-file -p "$HEAD_BLOB")
+      HEAD_TARGET=$(git -C "$DIR" cat-file -p "$HEAD_BLOB") || {
+        echo "error: cannot read the CLAUDE.md symlink target out of HEAD in $DIR" >&2
+        exit 1
+      }
       if [ "$HEAD_TARGET" != "$EXPECTED_TARGET" ]; then
         HEAD_PROBLEM="carries CLAUDE.md as a symlink to '$HEAD_TARGET'"
+      else
+        HEAD_TARGET_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-tree --full-tree HEAD -- "$EXPECTED_TARGET") || {
+          echo "error: cannot read the expected target '$EXPECTED_TARGET' out of HEAD in $DIR" >&2
+          exit 1
+        }
+        if ! tree_entry_is_regular_file "$HEAD_TARGET_ENTRY"; then
+          HEAD_PROBLEM="does not carry the expected target '$EXPECTED_TARGET' as a regular file"
+          HEAD_NEEDS_TARGET=1
+        fi
       fi
     fi
   fi
   if [ -n "$HEAD_PROBLEM" ]; then
     echo "error: the working tree is fine, but your branch tip $HEAD_PROBLEM, while $BASE manages it as a symlink -> $EXPECTED_TARGET." >&2
     echo "That is what a PR would carry, so the 'distinct types on each side' conflict would come back." >&2
-    echo "Commit the restored symlink: git -C '$DIR' add CLAUDE.md && git -C '$DIR' commit -m 'fix: restore the CLAUDE.md symlink' -- CLAUDE.md" >&2
+    echo "Commit the restored symlink: $(commit_branch_tip_command "$HEAD_NEEDS_TARGET")" >&2
     exit 1
   fi
+fi
+
+INDEX_UNMERGED=$(git -C "$DIR" --literal-pathspecs ls-files --unmerged -- CLAUDE.md) || {
+  echo "error: cannot inspect the CLAUDE.md index entry in $DIR" >&2
+  exit 1
+}
+if [ -n "$INDEX_UNMERGED" ]; then
+  echo "error: CLAUDE.md has unmerged index entries in $DIR; resolve the index before reporting done." >&2
+  echo "Restore it: $(restore_claude_command)" >&2
+  exit 1
+fi
+
+INDEX_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-files --stage -- CLAUDE.md) || {
+  echo "error: cannot read the staged CLAUDE.md entry in $DIR" >&2
+  exit 1
+}
+if [ -z "$INDEX_ENTRY" ]; then
+  echo "error: CLAUDE.md is missing from the index in $DIR, so the next commit would drop the symlink." >&2
+  echo "Restore it: $(restore_claude_command)" >&2
+  exit 1
+fi
+INDEX_ENTRY_LINES=$(printf '%s\n' "$INDEX_ENTRY" | awk 'END {print NR}')
+INDEX_MODE=$(printf '%s\n' "$INDEX_ENTRY" | awk '{print $1}')
+INDEX_BLOB=$(printf '%s\n' "$INDEX_ENTRY" | awk '{print $2}')
+INDEX_STAGE=$(printf '%s\n' "$INDEX_ENTRY" | awk '{print $3}')
+if [ "$INDEX_ENTRY_LINES" -ne 1 ] || [ "$INDEX_MODE" != 120000 ] || [ "$INDEX_STAGE" != 0 ]; then
+  echo "error: CLAUDE.md is not staged as the expected symlink in $DIR." >&2
+  echo "Restore it: $(restore_claude_command)" >&2
+  exit 1
+fi
+INDEX_TARGET=$(git -C "$DIR" cat-file -p "$INDEX_BLOB") || {
+  echo "error: cannot read the staged CLAUDE.md symlink target in $DIR" >&2
+  exit 1
+}
+if [ "$INDEX_TARGET" != "$EXPECTED_TARGET" ]; then
+  echo "error: the staged CLAUDE.md symlink in $DIR points at '$INDEX_TARGET', not '$EXPECTED_TARGET'." >&2
+  echo "Restore it: $(restore_claude_command)" >&2
+  exit 1
+fi
+
+INDEX_TARGET_ENTRY=$(git -C "$DIR" --literal-pathspecs ls-files --stage -- "$EXPECTED_TARGET") || {
+  echo "error: cannot read the staged target '$EXPECTED_TARGET' in $DIR" >&2
+  exit 1
+}
+if [ -z "$INDEX_TARGET_ENTRY" ]; then
+  echo "error: the expected target '$EXPECTED_TARGET' is missing from the index in $DIR." >&2
+  echo "Restore the target: $(restore_target_command)" >&2
+  exit 1
+fi
+INDEX_TARGET_LINES=$(printf '%s\n' "$INDEX_TARGET_ENTRY" | awk 'END {print NR}')
+INDEX_TARGET_MODE=$(printf '%s\n' "$INDEX_TARGET_ENTRY" | awk '{print $1}')
+INDEX_TARGET_STAGE=$(printf '%s\n' "$INDEX_TARGET_ENTRY" | awk '{print $3}')
+case "$INDEX_TARGET_MODE" in
+  100*) ;;
+  *)
+    echo "error: the expected target '$EXPECTED_TARGET' is not staged as a regular file in $DIR." >&2
+    echo "Restore the target: $(restore_target_command)" >&2
+    exit 1
+    ;;
+esac
+if [ "$INDEX_TARGET_LINES" -ne 1 ] || [ "$INDEX_TARGET_STAGE" != 0 ]; then
+  echo "error: the expected target '$EXPECTED_TARGET' has unmerged index entries in $DIR." >&2
+  echo "Restore the target: $(restore_target_command)" >&2
+  exit 1
 fi
 
 echo "ok: CLAUDE.md -> $EXPECTED_TARGET matches $BASE in $DIR (working tree and branch tip)"
