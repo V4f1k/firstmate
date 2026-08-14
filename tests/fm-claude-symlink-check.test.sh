@@ -174,6 +174,7 @@ assert_branch_tip_recovery() {
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
   [ -n "$cmd" ] || fail "$label: no branch-tip recovery command was printed: $out"
 
+  # shellcheck disable=SC2030,SC2031 # Git identity is intentionally scoped to this recovery subshell.
   (
     export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
     export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
@@ -234,6 +235,7 @@ test_branch_tip_missing_target_fails() {
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
   [ -n "$cmd" ] || fail "missing-target branch tip did not print a recovery commit command: $out"
   assert_contains "$cmd" "'AGENTS.md'" "branch-tip recovery did not include the missing target"
+  # shellcheck disable=SC2030,SC2031 # Git identity is intentionally scoped to this recovery subshell.
   (
     export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
     export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
@@ -265,6 +267,7 @@ test_branch_tip_recovery_force_adds_ignored_target() {
     "ignored-target recovery did not force-add the known CLAUDE.md path"
   assert_contains "$cmd" "--literal-pathspecs add -f -- 'AGENTS.md'" \
     "ignored-target recovery did not force-add the known target"
+  # shellcheck disable=SC2030,SC2031 # Git identity is intentionally scoped to this recovery subshell.
   (
     export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
     export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
@@ -295,6 +298,7 @@ test_branch_tip_recovery_preserves_target_work() {
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
   [ -n "$cmd" ] || fail "target-work recovery did not print a commit command: $out"
   assert_not_contains "$cmd" "'AGENTS.md'" "target-work recovery would include an already committed target"
+  # shellcheck disable=SC2030,SC2031 # Git identity is intentionally scoped to this recovery subshell.
   (
     export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
     export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
@@ -331,6 +335,7 @@ test_branch_tip_recovery_restores_missing_target_for_regular_claude() {
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
   [ -n "$cmd" ] || fail "missing-target regular-CLAUDE recovery did not print a commit command: $out"
   assert_contains "$cmd" "'AGENTS.md'" "missing-target regular-CLAUDE recovery omitted the target"
+  # shellcheck disable=SC2030,SC2031 # Git identity is intentionally scoped to this recovery subshell.
   (
     export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
     export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
@@ -497,6 +502,7 @@ test_recovery_target_pathspecs_are_literal() {
   [ "$rc" -ne 0 ] || fail "expected a branch-tip failure for the missing wildcard target"
   cmd=$(printf '%s\n' "$out" | sed -n 's/^Commit the restored symlink: //p')
   [ -n "$cmd" ] || fail "missing wildcard target did not print a commit recovery command: $out"
+  # shellcheck disable=SC2030,SC2031 # Git identity is intentionally scoped to this recovery subshell.
   (
     export GIT_AUTHOR_NAME='Firstmate Tests' GIT_AUTHOR_EMAIL='tests@example.invalid'
     export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
