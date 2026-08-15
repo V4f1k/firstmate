@@ -31,6 +31,8 @@ This is deliberate Option B ordering: the fleet is protected before the model ha
 
 Claude's Stop hook starts the successor arm at the next Stop after the handling turn, rather than before notification as Pi and OpenCode do.
 The durable wake queue preserves actionable events during the residual active-turn window, and the bounded turn-end guard enforces recovery at Stop when no watcher or auto-arm claim is present.
+During that interval the pull guard accepts a stale prior beacon only while the lock-owning Claude session still carries the same durable `pending:handling` recovery state and no auto-arm failure evidence; [`turnend-guard.md`](turnend-guard.md#guard-predicates) owns the full verdict.
+The turn-end guard remains PID-strict and does not accept that mid-turn evidence.
 For every supported arm path, a successor that observes an accepted down stretch emits `check: rearm-resurface` through the ordinary durable handling path before settling into its live wait.
 That recovery presentation includes all unacknowledged queue rows, the cursor-folded OPEN DECISIONS set, and still-unread informational status lines, so a still-open decision or a buried `note:` answer reappears even when recovery has no queue row of its own.
 The model no longer re-arms after ordinary wakes.

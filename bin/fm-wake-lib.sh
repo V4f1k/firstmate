@@ -143,7 +143,10 @@ fm_watcher_healthy() {
 #   autoarm     Claude's Stop-hook auto-arm and Cursor's stop-hook park: the
 #               watcher is armed at each turn end and exits on its wake, so it
 #               runs only BETWEEN turns. Mid-turn a fresh beacon with no live
-#               watcher process is the healthy state.
+#               watcher process is healthy. Claude additionally carries a
+#               durable pending handling generation across the full handling
+#               turn, so that exact lock-owned state stays healthy past grace;
+#               Cursor's separate park does not inherit that tolerance.
 #   extension   Pi (and pi-signed): .pi/extensions/fm-primary-pi-watch.ts owns
 #               continuity. It tears the watcher down on every actionable wake and
 #               spawns the replacement itself, so a genuinely unheld singleton lock
@@ -165,6 +168,41 @@ fm_supervision_model() {
     claude|cursor) printf 'autoarm\n' ;;
     pi|pi-signed) printf 'extension\n' ;;
     *) printf 'persistent\n' ;;
+  esac
+}
+
+# fm_claude_handling_turn_owns_supervision <state>
+# True only during the durable active-handling interval whose successor is due at
+# the lock-owning Claude session's next Stop. The recovery marker is written by
+# the watcher/drain protocol and changes from pending:handling only when handling
+# is acknowledged or a new downtime is published. Session-lock ancestry prevents
+# stale state from a prior or competing Claude session satisfying the predicate.
+# Auto-arm failure markers or a failed epoch override the tolerance so the
+# existing loud recovery path remains visible even if notice persistence failed.
+# This helper is called only by bin/fm-guard.sh, which
+# sources bin/fm-session-lock-lib.sh before requesting the verdict; a caller that
+# lacks that owner predicate fails closed.
+fm_claude_handling_turn_owns_supervision() {
+  local state=$1 harness outcome
+  command -v fm_session_lock_owned_by_self >/dev/null 2>&1 || return 1
+  harness=$("$FM_WAKE_LIB_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
+  [ "$harness" = claude ] || return 1
+  fm_session_lock_owned_by_self "$state" || return 1
+  if [ -e "$state/.claude-autoarm-failure-notified" ] \
+    || [ -L "$state/.claude-autoarm-failure-notified" ] \
+    || [ -e "$state/.claude-autoarm-failure-alarmed" ] \
+    || [ -L "$state/.claude-autoarm-failure-alarmed" ]; then
+    return 1
+  fi
+  outcome=$(sed -n 's/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' \
+    "$state/.claude-autoarm-epoch" 2>/dev/null || true)
+  case "$outcome" in
+    failed|failed-suppressed) return 1 ;;
+  esac
+  fm_recovery_marker_read "$state/.watcher-down" || return 1
+  case "$FM_RECOVERY_MARKER_TOKEN" in
+    pending:handling:*) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -237,7 +275,10 @@ fm_pi_extension_owns_supervision() {
 #                              stale-beacon - the beacon is stale beyond grace or
 #                                             absent (a genuine supervision lapse)
 # autoarm: a fresh beacon within grace is healthy even with no live watcher,
-# because the watcher only runs between turns; only a stale beacon is a lapse.
+# because the watcher only runs between turns. A stale beacon is also healthy
+# only for the lock-owning Claude session while its durable recovery generation
+# says pending:handling and no auto-arm failure evidence exists. Every other stale
+# auto-arm state, including Cursor's park model, remains a lapse.
 # extension: a live identity-matched watcher is the ordinary healthy state, but a
 # genuinely unheld lock is also healthy while the beacon is fresh AND a live Pi
 # session provably owns continuity (fm_pi_extension_owns_supervision) - that is the
@@ -266,7 +307,9 @@ fm_watcher_supervision_verdict() {
   esac
   model=$(fm_supervision_model)
   if [ "$model" = autoarm ]; then
-    [ "$fresh" = true ] && FM_WATCHER_VERDICT_OK=true
+    if [ "$fresh" = true ] || fm_claude_handling_turn_owns_supervision "$state"; then
+      FM_WATCHER_VERDICT_OK=true
+    fi
     return 0
   fi
   if fm_watcher_healthy "$state" "$watch" "$grace" "$home"; then
