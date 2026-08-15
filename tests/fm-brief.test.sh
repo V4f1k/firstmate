@@ -256,7 +256,7 @@ test_ship_mode_is_explicit_not_registry() {
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+  assert_grep "Immediately invoke /no-mistakes to validate and ship a PR; do not wait for another instruction." "$brief" \
     "explicit no-mistakes brief did not render the pipeline definition of done"
 
   # An unregistered project is not a blocker either, because nothing is looked up.
@@ -386,8 +386,24 @@ test_ship_brief_operating_contract() {
     "no-mistakes implementation commit was not a working milestone"
   assert_grep "never \`done:\`," "$brief" \
     "no-mistakes implementation commit was not a working milestone"
+  assert_grep "Immediately invoke /no-mistakes to validate and ship a PR; do not wait for another instruction." "$brief" \
+    "no-mistakes implementation milestone still waited for a later pipeline instruction"
   assert_no_grep "When you believe it is complete, append \`done: {summary}\`" "$brief" \
     "no-mistakes brief still treated implementation completion as done"
+  assert_grep "append \`blocked: {why}\` and wait in the same turn for firstmate's help" "$brief" \
+    "ordinary ship brief ended the turn after a blocked status"
+  assert_grep "append \`needs-decision: {summary of options}\` and wait in the same turn" "$brief" \
+    "ordinary ship brief ended the turn after a needs-decision status"
+  assert_grep "append \`blocked: {the daemon error}\` and wait in the same turn for firstmate" "$brief" \
+    "ordinary ship brief ended the turn after a daemon blocker"
+  assert_grep "ask-user findings are never yours to answer: escalate to firstmate (rule 6), then enter the same-turn wait" "$brief" \
+    "no-mistakes ask-user escalation ended the turn after a nonterminal status"
+  assert_no_grep "append \`blocked: {why}\` and stop" "$brief" \
+    "ordinary ship brief contradicted nonterminal blocked continuation"
+  assert_no_grep "append \`needs-decision: {summary of options}\` and stop" "$brief" \
+    "ordinary ship brief contradicted nonterminal decision continuation"
+  assert_no_grep "append \`blocked: {the daemon error}\` and stop" "$brief" \
+    "ordinary ship brief contradicted nonterminal daemon-error continuation"
   assert_grep "After /no-mistakes reports CI green" "$brief" \
     "no-mistakes brief lost its PR-with-green-checks terminal boundary"
   pass "fm-brief.sh: ordinary ship brief preserves provenance, nonterminal continuation, evidence identity, and no-mistakes completion boundaries"
