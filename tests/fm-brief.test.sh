@@ -210,8 +210,8 @@ test_ship_modes_generate_clean_briefs() {
     grep -qx "Delivery contract: mode=$mode" "$brief" \
       || fail "$id: brief did not record its machine-readable delivery contract line"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
-    assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
-      "$id: brief missing nonterminal working:/setup-complete gate protection"
+    assert_grep "Every status line except \`done:\` and \`failed:\` is nonterminal, including \`working:\`" "$brief" \
+      "$id: brief missing nonterminal status gate protection"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
@@ -256,7 +256,7 @@ test_ship_mode_is_explicit_not_registry() {
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+  assert_grep "Immediately invoke /no-mistakes to validate and ship a PR; do not wait for another instruction." "$brief" \
     "explicit no-mistakes brief did not render the pipeline definition of done"
 
   # An unregistered project is not a blocker either, because nothing is looked up.
@@ -352,6 +352,67 @@ test_no_mistakes_dod_wording() {
   assert_grep "firstmate's authority check" "$brief" \
     "no-mistakes DOD lost the apostrophe prose that the structural fix makes parse-safe"
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe"
+}
+
+test_ship_brief_operating_contract() {
+  local home id brief
+  home="$TMP_ROOT/operating-contract-home"
+  mkdir -p "$home/data"
+  id="brief-operating-contract-b2"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "operating-contract brief was not scaffolded"
+  assert_grep "States: working, needs-decision, blocked, paused, resolved, done, failed." "$brief" \
+    "ordinary ship brief did not list resolved as a status"
+  assert_grep "Every status line except \`done:\` and \`failed:\` is nonterminal, including \`working:\`" "$brief" \
+    "ordinary ship brief did not define every nonterminal status"
+  assert_grep "continue the same turn's work or enter its prescribed wait" "$brief" \
+    "ordinary ship brief did not require same-turn continuation for nonterminal statuses"
+  assert_grep "Describe each decision as coming from firstmate unless firstmate explicitly says the captain made it" "$brief" \
+    "ordinary ship brief did not preserve decision provenance"
+  assert_grep "standing yolo authority is firstmate's authority and must never be rewritten as a direct captain decision" "$brief" \
+    "ordinary ship brief rewrote standing yolo authority as a captain decision"
+  assert_grep "When the task requires evidence from multiple execution paths" "$brief" \
+    "ordinary ship brief did not require path-specific evidence"
+  assert_grep "copied or byte-identical" "$brief" \
+    "ordinary ship brief allowed indistinguishable evidence artifacts"
+  assert_grep "artifacts are not sufficient evidence" "$brief" \
+    "ordinary ship brief did not reject indistinguishable evidence artifacts"
+  assert_grep "Wait in the same turn for \`no-mistakes axi respond\` itself to return" "$brief" \
+    "no-mistakes gate response did not remain active until the pipeline returned"
+  assert_grep "then immediately process its returned gate or outcome and continue driving the pipeline" "$brief" \
+    "no-mistakes gate response did not process the returned pipeline state"
+  assert_grep "do not end the turn or wait again for another return" "$brief" \
+    "no-mistakes gate response allowed a dead wait after the pipeline returned"
+  assert_no_grep "After \`no-mistakes axi respond\` returns, wait in the same turn for the next pipeline return" "$brief" \
+    "no-mistakes gate response still waited for a nonexistent later return"
+  assert_grep "report it with" "$brief" \
+    "no-mistakes implementation commit was not a working milestone"
+  assert_grep "working: {summary}" "$brief" \
+    "no-mistakes implementation commit was not a working milestone"
+  assert_grep "never \`done:\`," "$brief" \
+    "no-mistakes implementation commit was not a working milestone"
+  assert_grep "Immediately invoke /no-mistakes to validate and ship a PR; do not wait for another instruction." "$brief" \
+    "no-mistakes implementation milestone still waited for a later pipeline instruction"
+  assert_no_grep "When you believe it is complete, append \`done: {summary}\`" "$brief" \
+    "no-mistakes brief still treated implementation completion as done"
+  assert_grep "append \`blocked: {why}\` and wait in the same turn for firstmate's help" "$brief" \
+    "ordinary ship brief ended the turn after a blocked status"
+  assert_grep "append \`needs-decision: {summary of options}\` and wait in the same turn" "$brief" \
+    "ordinary ship brief ended the turn after a needs-decision status"
+  assert_grep "append \`blocked: {the daemon error}\` and wait in the same turn for firstmate" "$brief" \
+    "ordinary ship brief ended the turn after a daemon blocker"
+  assert_grep "ask-user findings are never yours to answer: escalate to firstmate (rule 6), then enter the same-turn wait" "$brief" \
+    "no-mistakes ask-user escalation ended the turn after a nonterminal status"
+  assert_no_grep "append \`blocked: {why}\` and stop" "$brief" \
+    "ordinary ship brief contradicted nonterminal blocked continuation"
+  assert_no_grep "append \`needs-decision: {summary of options}\` and stop" "$brief" \
+    "ordinary ship brief contradicted nonterminal decision continuation"
+  assert_no_grep "append \`blocked: {the daemon error}\` and stop" "$brief" \
+    "ordinary ship brief contradicted nonterminal daemon-error continuation"
+  assert_grep "After /no-mistakes reports CI green" "$brief" \
+    "no-mistakes brief lost its PR-with-green-checks terminal boundary"
+  pass "fm-brief.sh: ordinary ship brief preserves provenance, nonterminal continuation, evidence identity, and no-mistakes completion boundaries"
 }
 
 test_ship_project_memory_wording() {
@@ -634,7 +695,7 @@ test_herdr_lab_contract_applies_to_scouts_but_not_secondmates() {
 }
 
 test_pause_verb_override_renders_all_brief_scaffolds() {
-  local home kind id brief
+  local home kind id brief expected_states
   home="$TMP_ROOT/pause-verb-home"
   mkdir -p "$home/data"
 
@@ -655,7 +716,9 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
         ;;
     esac
     brief="$home/data/$id/brief.md"
-    assert_grep "States: working, needs-decision, blocked, awaiting, done, failed." "$brief" \
+    expected_states="States: working, needs-decision, blocked, awaiting, done, failed."
+    [ "$kind" = ship ] && expected_states="States: working, needs-decision, blocked, awaiting, resolved, done, failed."
+    assert_grep "$expected_states" "$brief" \
       "$kind brief did not render the configured pause verb in its states list"
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
     assert_grep 'Use `awaiting: {why}`' "$brief" \
@@ -719,6 +782,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_ship_brief_operating_contract
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
