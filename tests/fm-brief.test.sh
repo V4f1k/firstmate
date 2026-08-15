@@ -410,6 +410,21 @@ test_ship_brief_operating_contract() {
     "ordinary ship brief contradicted nonterminal decision continuation"
   assert_no_grep "append \`blocked: {the daemon error}\` and stop" "$brief" \
     "ordinary ship brief contradicted nonterminal daemon-error continuation"
+  assert_grep "record each process's exact identity immediately when it starts" "$brief" \
+    "ordinary ship brief did not require exact process identities for synthetic load or helpers"
+  assert_grep "Stop every recorded process in the same turn that created or used it" "$brief" \
+    "ordinary ship brief did not require same-turn bounded cleanup"
+  assert_grep "verify that every recorded process has exited" "$brief" \
+    "ordinary ship brief did not require exit verification"
+  assert_grep "ordinary task teardown is not a fallback" "$brief" \
+    "ordinary ship brief treated task teardown as a fallback for out-of-worktree processes"
+  assert_grep "outside the task worktree, including in scratch space or a pipeline-owned worktree" "$brief" \
+    "ordinary ship brief did not cover out-of-worktree helpers"
+  # shellcheck disable=SC2016 # Literal backticks must stay literal in this generated-output assertion.
+  assert_grep 'Never use broad `pkill -f`, restart the shared no-mistakes daemon, guess a PID, or stop a process you did not create.' "$brief" \
+    "ordinary ship brief allowed unsafe broad or non-owned process cleanup"
+  assert_grep "continue using only its recorded identity rather than broadening the match or deferring cleanup to teardown" "$brief" \
+    "ordinary ship brief did not define bounded-cleanup failure behavior"
   assert_grep "After /no-mistakes reports CI green" "$brief" \
     "no-mistakes brief lost its PR-with-green-checks terminal boundary"
   pass "fm-brief.sh: ordinary ship brief preserves provenance, nonterminal continuation, evidence identity, and no-mistakes completion boundaries"
@@ -762,6 +777,19 @@ test_scout_and_secondmate_scaffold() {
   assert_present "$brief" "scout brief was not scaffolded"
   assert_grep "SCOUT task" "$brief" "scout brief must declare itself a scout task"
   assert_grep "report.md" "$brief" "scout brief must point at the report deliverable"
+  assert_grep "record each process's exact identity immediately when it starts" "$brief" \
+    "scout brief did not require exact process identities for synthetic load or helpers"
+  assert_grep "Stop every recorded process in the same turn that created or used it" "$brief" \
+    "scout brief did not require same-turn bounded cleanup"
+  assert_grep "verify that every recorded process has exited" "$brief" \
+    "scout brief did not require exit verification"
+  assert_grep "ordinary task teardown is not a fallback" "$brief" \
+    "scout brief treated task teardown as a fallback for out-of-worktree processes"
+  assert_grep "outside the task worktree, including in scratch space or a pipeline-owned worktree" "$brief" \
+    "scout brief did not cover out-of-worktree helpers"
+  # shellcheck disable=SC2016 # Literal backticks must stay literal in this generated-output assertion.
+  assert_grep 'Never use broad `pkill -f`, restart the shared no-mistakes daemon, guess a PID, or stop a process you did not create.' "$brief" \
+    "scout brief allowed unsafe broad or non-owned process cleanup"
 
   FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
     FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-sm-q6 --secondmate alpha >/dev/null 2>&1 \
