@@ -378,8 +378,14 @@ test_ship_brief_operating_contract() {
     "ordinary ship brief allowed indistinguishable evidence artifacts"
   assert_grep "artifacts are not sufficient evidence" "$brief" \
     "ordinary ship brief did not reject indistinguishable evidence artifacts"
-  assert_grep "After \`no-mistakes axi respond\` returns, wait in the same turn for the next pipeline return" "$brief" \
-    "no-mistakes gate response did not require waiting for the next pipeline return"
+  assert_grep "Wait in the same turn for \`no-mistakes axi respond\` itself to return" "$brief" \
+    "no-mistakes gate response did not remain active until the pipeline returned"
+  assert_grep "then immediately process its returned gate or outcome and continue driving the pipeline" "$brief" \
+    "no-mistakes gate response did not process the returned pipeline state"
+  assert_grep "do not end the turn or wait again for another return" "$brief" \
+    "no-mistakes gate response allowed a dead wait after the pipeline returned"
+  assert_no_grep "After \`no-mistakes axi respond\` returns, wait in the same turn for the next pipeline return" "$brief" \
+    "no-mistakes gate response still waited for a nonexistent later return"
   assert_grep "report it with" "$brief" \
     "no-mistakes implementation commit was not a working milestone"
   assert_grep "working: {summary}" "$brief" \

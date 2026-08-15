@@ -397,7 +397,7 @@ Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate (rule 6), then enter the same-turn wait for its decision.
   Firstmate applies the authority contract in its \`AGENTS.md\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
-  After \`no-mistakes axi respond\` returns, wait in the same turn for the next pipeline return; do not end the turn or treat the response command's completion as pipeline completion.
+  Wait in the same turn for \`no-mistakes axi respond\` itself to return, then immediately process its returned gate or outcome and continue driving the pipeline; do not end the turn or wait again for another return.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
