@@ -387,6 +387,25 @@ Observed output, before and after the model correction, then with the recorded P
 ●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 0s ago).
 ```
 
+The Claude handling-turn stale-beacon correction was verified on 2026-08-15 with a live fake Claude process that owned the fixture session lock while one durable recovery generation remained `pending:handling`.
+The same process invoked the real pull guard against a fixed watcher beacon at exactly 299 seconds and 301 seconds, so only the clock changed across the boundary and both observations stayed silent.
+Completed handling, an auto-arm failure marker, and a failed auto-arm epoch remained loud, while the strict turn-end predicate, durable wake-queue warning, Cursor auto-arm, Pi extension hand-off, and persistent-watcher guarantees all remained unchanged.
+The Claude verdict was also exercised across every supported runtime backend: tmux, Herdr, Zellij, Orca, and cmux.
+
+```sh
+env -u FM_ROOT_OVERRIDE -u FM_HOME bin/fm-lint.sh
+env -u FM_ROOT_OVERRIDE -u FM_HOME bin/fm-doc-audience-check.sh
+env -u FM_ROOT_OVERRIDE -u FM_HOME bin/fm-test-run.sh tests/fm-claude-stop-autoarm.test.sh tests/fm-guard-stale-banner.test.sh tests/fm-turnend-guard.test.sh tests/fm-supervision-instructions.test.sh tests/fm-watch-arm.test.sh tests/fm-pi-watch-extension.test.sh tests/fm-session-start.test.sh
+```
+
+Observed output:
+
+```text
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-doc-audience-check: ok surfaces=68 local_links=255
+FM_TEST_SUMMARY total=7 failed=0 skipped_gate=0 duration_ms=327152
+```
+
 The broader relevant regression pass was rerun on 2026-08-02 without live-home or daemon mutation.
 
 ```sh

@@ -12,6 +12,29 @@ set -u
 
 TMP_ROOT=$(fm_test_tmproot fm-guard-stale-banner)
 
+FAKEBIN=$(fm_fakebin "$TMP_ROOT/claude-runtime")
+ln -s /bin/bash "$FAKEBIN/claude"
+FAKE_CLAUDE="$FAKEBIN/claude"
+cat > "$FAKEBIN/date" <<'SH'
+#!/usr/bin/env bash
+if [ "$#" -eq 1 ] && [ "$1" = +%s ] && [ -n "${FM_TEST_NOW:-}" ]; then
+  printf '%s\n' "$FM_TEST_NOW"
+  exit 0
+fi
+PATH=/usr/bin:/bin exec date "$@"
+SH
+chmod +x "$FAKEBIN/date"
+
+set_mtime() {  # <epoch> <file>
+  local epoch=$1 file=$2 stamp
+  if stamp=$(date -r "$epoch" +%Y%m%d%H%M.%S 2>/dev/null); then
+    touch -t "$stamp" "$file"
+  else
+    stamp=$(date -d "@$epoch" +%Y%m%d%H%M.%S)
+    touch -t "$stamp" "$file"
+  fi
+}
+
 make_guard_case() {
   local name=$1 dir home root
   dir="$TMP_ROOT/$name"
@@ -71,6 +94,78 @@ run_guard_case_autoarm() {
     FM_HOME="$(case_home "$dir")" \
     FM_GUARD_GRACE=999 \
     FM_SUPERVISION_MODEL=autoarm \
+    "$ROOT/bin/fm-guard.sh" 2>&1
+}
+
+record_claude_handling_turn() {
+  local dir=$1 state=${2:-pending:handling:fixture-generation} home
+  home=$(case_home "$dir")
+  printf '%s\n' "$state" > "$home/state/.watcher-down"
+}
+
+# Run the real pull guard as a child of a live fake-Claude process that owns the
+# fixture home's session lock. A fixed date shim makes the beacon-age boundary
+# exact rather than depending on which side of a wall-clock second the test lands.
+run_guard_case_claude_at_age() {  # <case-dir> <age> [backend]
+  local dir=$1 age=$2 backend=${3:-tmux} home beat_epoch=1700000000
+  home=$(case_home "$dir")
+  : > "$home/state/.last-watcher-beat"
+  set_mtime "$beat_epoch" "$home/state/.last-watcher-beat"
+  # The child shell must expand its own pid and fixture environment.
+  # shellcheck disable=SC2016
+  env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u PI_CODING_AGENT -u GROK_AGENT \
+    -u FM_SUPERVISION_MODEL \
+    CLAUDECODE=1 \
+    FM_BACKEND="$backend" \
+    FM_TEST_NOW=$((beat_epoch + age)) \
+    FM_GUARD_ROOT="$ROOT" \
+    FM_ROOT_OVERRIDE="$(case_root "$dir")" \
+    FM_HOME="$home" \
+    FM_GUARD_GRACE=300 \
+    PATH="$FAKEBIN:$PATH" \
+    "$FAKE_CLAUDE" -c '
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      "$FM_GUARD_ROOT/bin/fm-guard.sh"
+    ' 2>&1
+}
+
+run_guard_case_claude_boundary() {  # <case-dir>
+  local dir=$1 home beat_epoch=1700000000
+  home=$(case_home "$dir")
+  : > "$home/state/.last-watcher-beat"
+  set_mtime "$beat_epoch" "$home/state/.last-watcher-beat"
+  # The child shell must expand its own pid and fixture environment.
+  # shellcheck disable=SC2016
+  env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u PI_CODING_AGENT -u GROK_AGENT \
+    -u FM_SUPERVISION_MODEL \
+    CLAUDECODE=1 \
+    FM_TEST_BEAT_EPOCH="$beat_epoch" \
+    FM_GUARD_ROOT="$ROOT" \
+    FM_ROOT_OVERRIDE="$(case_root "$dir")" \
+    FM_HOME="$home" \
+    FM_GUARD_GRACE=300 \
+    PATH="$FAKEBIN:$PATH" \
+    "$FAKE_CLAUDE" -c '
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      FM_TEST_NOW=$((FM_TEST_BEAT_EPOCH + 299)) \
+        "$FM_GUARD_ROOT/bin/fm-guard.sh" > "$FM_HOME/state/guard-299.out" 2>&1
+      FM_TEST_NOW=$((FM_TEST_BEAT_EPOCH + 301)) \
+        "$FM_GUARD_ROOT/bin/fm-guard.sh" > "$FM_HOME/state/guard-301.out" 2>&1
+    '
+}
+
+run_guard_case_at_age() {  # <case-dir> <age> <model> [backend]
+  local dir=$1 age=$2 model=$3 backend=${4:-tmux} home beat_epoch=1700000000
+  home=$(case_home "$dir")
+  : > "$home/state/.last-watcher-beat"
+  set_mtime "$beat_epoch" "$home/state/.last-watcher-beat"
+  FM_ROOT_OVERRIDE="$(case_root "$dir")" \
+    FM_HOME="$home" \
+    FM_BACKEND="$backend" \
+    FM_TEST_NOW=$((beat_epoch + age)) \
+    FM_GUARD_GRACE=300 \
+    FM_SUPERVISION_MODEL="$model" \
+    PATH="$FAKEBIN:$PATH" \
     "$ROOT/bin/fm-guard.sh" 2>&1
 }
 
@@ -381,6 +476,104 @@ test_autoarm_stale_episode_is_stable() {
   assert_contains "$out2" "full banner already printed this episode" \
     "second auto-arm stale call did not print the concise reminder"
   pass "fm-guard stale banner: auto-arm stale episode stays one episode across calls"
+}
+
+# This is the demonstrated false-positive boundary. The watcher has delivered a
+# wake, the drain has moved its recovery generation into handling, and the same
+# live Claude session owns the home until its next Stop hook starts a successor.
+# Only the observed beacon age changes between the two executable guard calls.
+test_claude_handling_turn_crosses_grace_without_watcher_down_alarm() {
+  local dir out_299 out_301
+  dir=$(make_guard_case claude-handling-boundary)
+  record_claude_handling_turn "$dir"
+  run_guard_case_claude_boundary "$dir" \
+    || fail "the live Claude handling-turn boundary fixture could not run both guard calls"
+  out_299=$(cat "$(case_home "$dir")/state/guard-299.out")
+  out_301=$(cat "$(case_home "$dir")/state/guard-301.out")
+  assert_not_contains "$out_299" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "a live Claude handling turn must be healthy at beacon age 299s"
+  assert_not_contains "$out_301" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "a live Claude handling turn must remain healthy at beacon age 301s"
+  pass "fm-guard stale banner: live Claude handling stays healthy across the exact 299s/301s boundary"
+}
+
+test_claude_completed_handling_and_autoarm_failure_stay_alarm() {
+  local dir completed failure failed_epoch out
+  completed=$(make_guard_case claude-completed-handling)
+  record_claude_handling_turn "$completed" acked:handling:fixture-generation
+  out=$(run_guard_case_claude_at_age "$completed" 301)
+  assert_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "completed Claude handling must not tolerate a stale beacon"
+
+  failure=$(make_guard_case claude-autoarm-failure)
+  record_claude_handling_turn "$failure"
+  : > "$(case_home "$failure")/state/.claude-autoarm-failure-notified"
+  out=$(run_guard_case_claude_at_age "$failure" 301)
+  assert_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "a genuine Claude auto-arm failure must stay loud during recovery"
+
+  failed_epoch=$(make_guard_case claude-autoarm-failed-epoch)
+  record_claude_handling_turn "$failed_epoch"
+  printf '%s\n' 'epoch=3 owner_pid=999 outcome=failed updated_at=1700000000' \
+    > "$(case_home "$failed_epoch")/state/.claude-autoarm-epoch"
+  out=$(run_guard_case_claude_at_age "$failed_epoch" 301)
+  assert_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "a failed Claude auto-arm epoch must stay loud even if its notice marker could not persist"
+  pass "fm-guard stale banner: completed handling and genuine Claude auto-arm failure stay loud"
+}
+
+test_claude_handling_keeps_queued_wake_warning() {
+  local dir home out
+  dir=$(make_guard_case claude-handling-queued-wake)
+  home=$(case_home "$dir")
+  record_claude_handling_turn "$dir"
+  printf '%s\n' "1700000000\t1\tsignal\ttask\tsignal: crewmate needs a decision" > "$home/state/.wake-queue"
+  out=$(run_guard_case_claude_at_age "$dir" 301)
+  assert_not_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "the durable queue must not resurrect the false Claude watcher-down banner"
+  assert_contains "$out" "queued wakes pending" \
+    "the durable queued-wake warning must survive Claude handling tolerance"
+  pass "fm-guard stale banner: Claude handling tolerance preserves the durable queued-wake warning"
+}
+
+test_claude_tolerance_does_not_weaken_other_supervision_models() {
+  local dir home out pid
+  dir=$(make_guard_case cursor-autoarm-stale-handling)
+  record_claude_handling_turn "$dir"
+  out=$(CURSOR_AGENT=1 run_guard_case_at_age "$dir" 301 autoarm)
+  assert_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "Cursor's stop-hook park must not inherit Claude handling tolerance"
+
+  dir=$(make_guard_case pi-extension-stale-handling)
+  home=$(case_home "$dir")
+  record_claude_handling_turn "$dir"
+  sleep 60 &
+  pid=$!
+  record_pi_extension_session "$dir" "$pid" || fail "could not record the Pi extension session"
+  out=$(run_guard_case_at_age "$dir" 301 extension)
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  assert_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "Pi's extension hand-off must still alarm beyond grace"
+
+  dir=$(make_guard_case persistent-stale-handling)
+  record_claude_handling_turn "$dir"
+  out=$(run_guard_case_at_age "$dir" 301 persistent)
+  assert_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" \
+    "persistent-watcher primaries must not inherit Claude handling tolerance"
+  pass "fm-guard stale banner: Cursor, Pi, and persistent supervision guarantees stay strict"
+}
+
+test_runtime_backends_do_not_change_claude_handling_verdict() {
+  local backend dir out
+  for backend in tmux herdr zellij orca cmux; do
+    dir=$(make_guard_case "claude-handling-backend-$backend")
+    record_claude_handling_turn "$dir"
+    out=$(run_guard_case_claude_at_age "$dir" 301 "$backend")
+    assert_not_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" \
+      "the $backend backend changed Claude's handling-turn verdict"
+  done
+  pass "fm-guard stale banner: all supported runtime backends preserve the Claude handling verdict"
 }
 
 test_persistent_no_watcher_banner_names_missing_process() {
@@ -695,6 +888,11 @@ test_extension_live_watcher_is_healthy_without_ownership_evidence
 test_autoarm_fresh_beacon_without_watcher_is_healthy
 test_autoarm_stale_beacon_alarms_with_correct_reason
 test_autoarm_stale_episode_is_stable
+test_claude_handling_turn_crosses_grace_without_watcher_down_alarm
+test_claude_completed_handling_and_autoarm_failure_stay_alarm
+test_claude_handling_keeps_queued_wake_warning
+test_claude_tolerance_does_not_weaken_other_supervision_models
+test_runtime_backends_do_not_change_claude_handling_verdict
 test_persistent_no_watcher_banner_names_missing_process
 test_persistent_no_watcher_episode_survives_beacon_touch
 test_fresh_beacon_without_live_watcher_stays_alarm

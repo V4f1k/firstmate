@@ -1164,6 +1164,18 @@ test_hook_claude_mode_reblocks_stop_hook_active_when_unhealthy() {
   pass "fm-turnend-guard --claude: re-blocks a loop-guarded stop while unhealthy and unclaimed (incident regression)"
 }
 
+test_hook_claude_mode_pending_handling_stays_strict_at_turn_end() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-pending-handling-turnend")
+  : > "$dir/state/task1.meta"
+  printf '%s\n' pending:handling:fixture-generation > "$dir/state/.watcher-down"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" false); status=$?
+  expect_code 2 "$status" "Claude's pending handling tolerance must not relax the turn-end watcher predicate"
+  assert_contains "$out" "TURN WOULD END BLIND" \
+    "the strict turn-end guard must stay loud until auto-arm claims recovery"
+  pass "fm-turnend-guard --claude: pending handling does not relax the strict turn-end predicate"
+}
+
 test_hook_claude_mode_reblocks_x_mode_without_tasks() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-x-mode")
@@ -1648,6 +1660,7 @@ test_opencode_plugin_anchors_guard_to_worktree
 test_pi_extension_injects_once_per_logical_agent_run
 test_pi_extension_retries_after_followup_delivery_failure
 test_hook_claude_mode_reblocks_stop_hook_active_when_unhealthy
+test_hook_claude_mode_pending_handling_stays_strict_at_turn_end
 test_hook_claude_mode_reblocks_x_mode_without_tasks
 test_hook_claude_mode_allows_when_autoarm_owner_alive
 test_hook_claude_mode_repeated_failed_to_arming_interleavings_reach_fail_open

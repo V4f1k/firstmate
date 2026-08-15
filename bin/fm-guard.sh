@@ -11,8 +11,9 @@
 # it in the tool output of whatever it was doing - the one channel every harness
 # has. Supervision health is MODEL-AWARE (fm_watcher_supervision_verdict in
 # bin/fm-wake-lib.sh): under the Claude Stop auto-arm model the watcher runs only
-# between turns, so mid-turn a fresh beacon with no live watcher is healthy and
-# only a stale beacon (beyond FM_GUARD_GRACE) is a genuine lapse; under the Pi
+# between turns, so mid-turn a fresh beacon with no live watcher is healthy, and
+# a stale beacon remains healthy only while the lock-owning Claude session has a
+# durable pending handling generation and no auto-arm failure evidence; under the Pi
 # extension model the extension tears the watcher down and respawns it on every
 # actionable wake, so a fresh beacon with a genuinely unheld lock is healthy
 # while that live Pi session provably owns continuity; any held but unhealthy
@@ -48,6 +49,8 @@ STALE_BANNER_MARKER="$STATE/.guard-watcher-stale-banner"
 
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$SCRIPT_DIR/fm-session-lock-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
 # shellcheck source=bin/fm-supervision-lib.sh
