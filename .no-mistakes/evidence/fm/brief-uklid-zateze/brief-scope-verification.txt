@@ -1,0 +1,18 @@
+Generated interface verification
+ship cleanup sections: 1
+scout cleanup sections: 1
+secondmate cleanup sections: 0
+
+Ship/scout contract excerpt:
+# Synthetic load and helper-process cleanup
+If you create synthetic load or another long-lived helper process, record each process's exact identity immediately when it starts, using the exact PID returned by the launcher or a helper-provided identity that uniquely identifies it.
+If a launcher creates additional child processes, record each child identity as well.
+Stop every recorded process in the same turn that created or used it, using a bounded cleanup path that signals only those recorded identities, and verify that every recorded process has exited before continuing or ending the turn.
+This applies even when a helper runs outside the task worktree, including in scratch space or a pipeline-owned worktree, because ordinary task teardown is not a fallback and cannot reliably reach those processes.
+Never use broad `pkill -f`, restart the shared no-mistakes daemon, guess a PID, or stop a process you did not create.
+If a recorded process does not exit within the bound, report the cleanup failure and continue using only its recorded identity rather than broadening the match or deferring cleanup to teardown.
+
+# Setup
+
+Secondmate role marker:
+You are a persistent second mate managed by the main firstmate. Work on your own; do not wait for a human.
