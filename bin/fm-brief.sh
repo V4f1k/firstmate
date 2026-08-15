@@ -298,6 +298,17 @@ EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
+IFS= read -r -d '' PROCESS_CLEANUP_SECTION <<'EOF' || true
+# Synthetic load and helper-process cleanup
+If you create synthetic load or another long-lived helper process, record each process's exact identity immediately when it starts, using the exact PID returned by the launcher or a helper-provided identity that uniquely identifies it.
+If a launcher creates additional child processes, record each child identity as well.
+Stop every recorded process in the same turn that created or used it, using a bounded cleanup path that signals only those recorded identities, and verify that every recorded process has exited before continuing or ending the turn.
+This applies even when a helper runs outside the task worktree, including in scratch space or a pipeline-owned worktree, because ordinary task teardown is not a fallback and cannot reliably reach those processes.
+Never use broad `pkill -f`, restart the shared no-mistakes daemon, guess a PID, or stop a process you did not create.
+If a recorded process does not exit within the bound, report the cleanup failure and continue using only its recorded identity rather than broadening the match or deferring cleanup to teardown.
+EOF
+PROCESS_CLEANUP_SECTION=${PROCESS_CLEANUP_SECTION%$'\n'}
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -306,6 +317,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 {TASK}
 
 $HERDR_SECTION
+
+$PROCESS_CLEANUP_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
@@ -417,6 +430,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 {TASK}
 
 $HERDR_SECTION
+
+$PROCESS_CLEANUP_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
