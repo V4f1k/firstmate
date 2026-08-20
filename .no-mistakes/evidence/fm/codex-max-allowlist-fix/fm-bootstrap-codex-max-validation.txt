@@ -1,0 +1,2 @@
+codex:max exit=0 output=<empty>
+codex:ultra exit=0 output=CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:ultra

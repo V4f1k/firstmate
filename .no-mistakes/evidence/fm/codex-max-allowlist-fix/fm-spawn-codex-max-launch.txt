@@ -1,0 +1,4 @@
+focused test: test_codex_threads_max_effort
+test_exit=0
++ launch='env -u CURSOR_AGENT -u CURSOR_INVOKED_AS codex --model '\''gpt-5'\'' -c '\''model_reasoning_effort="max"'\'' --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch '\''/private/var/folders/mz/3dbzbvkd1375djgpnq7r7hj40000gp/T/fm-spawn-dispatch-profile.3GPqH2/profile-codex-max/home/state/profile-codex-max-z4.turn-ended'\''\"]" "$('\''/Users/computer/.no-mistakes/worktrees/2f3dd046dbd1/01M0EY2QMSWD9NFZRSYB2C1Y10/bin/fm-operational-input.sh'\'' encode launch-brief < '\''/var/folders/mz/3dbzbvkd1375djgpnq7r7hj40000gp/T//fm-spawn-dispatch-profile.3GPqH2/profile-codex-max/home/data/profile-codex-max-z4/brief.md'\'')"'
+ok - codex receives max through model_reasoning_effort

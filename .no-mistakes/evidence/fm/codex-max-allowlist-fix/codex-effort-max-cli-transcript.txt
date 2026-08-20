@@ -1,0 +1,17 @@
+$ codex --version
+codex-cli 0.147.0
+$ codex debug models | jq -r ...
+gpt-5.6-sol	low,medium,high,xhigh,max,ultra
+gpt-5.6-terra	low,medium,high,xhigh,max,ultra
+gpt-5.6-luna	low,medium,high,xhigh,max
+$ codex exec ... model_reasoning_effort="max" ...
+exit=0
+OpenAI Codex v0.147.0
+model: gpt-5.6-luna
+reasoning effort: max
+OK
+OK
+$ codex exec ... model_reasoning_effort="bogus" ...
+exit=1
+    "message": "[ReasoningEffortParam] [reasoning.effort] [invalid_enum_value] Invalid value: 'bogus'. Supported values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'.",
+    "message": "[ReasoningEffortParam] [reasoning.effort] [invalid_enum_value] Invalid value: 'bogus'. Supported values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'.",
