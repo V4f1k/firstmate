@@ -172,6 +172,23 @@ Valid cleanup removed only the exact task-bound target and left the control wind
 The metadata-only validation covers tmux, Herdr, Zellij, Orca, and cmux before backend dispatch.
 Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that backend cleanup boundary; their harness-specific hook files, tokens, transcript bindings, and session-log sidecars are cleaned only after it, so no harness needs a separate endpoint parser.
 
+## Codex CLI effort
+
+The Codex effort allowlist was independently verified on 2026-08-20 against codex-cli 0.147.0.
+
+```sh
+codex --version
+codex debug models
+codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-luna -c 'model_reasoning_effort="max"' 'Reply with exactly OK.'
+codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-luna -c 'model_reasoning_effort="bogus"' 'Reply with exactly OK.'
+```
+
+The version probe reported `codex-cli 0.147.0`.
+The model catalog reported `low`, `medium`, `high`, `xhigh`, and `max` for `gpt-5.6-luna`, plus `ultra` for `gpt-5.6-sol` and `gpt-5.6-terra`.
+The positive read-only probe exited 0 and reported `reasoning effort: max`.
+The negative probe exited 1 with HTTP 400 and enumerated `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` as supported values.
+Firstmate intentionally maps only `low`, `medium`, `high`, `xhigh`, and `max`; it does not introduce Codex's lower values or `ultra` into the shared effort vocabulary.
+
 ## Composer classification matrix
 
 The shared composer classifier (`bin/fm-composer-lib.sh`, `fm_composer_classify_screen`) owns every composer shape fleet-wide; each backend contributes only a capture and a capability descriptor.
