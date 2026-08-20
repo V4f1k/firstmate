@@ -126,7 +126,7 @@ The supported launch-profile flags below are verified locally; each row records 
 | Harness | Model flag | Effort flag | Notes |
 |---|---|---|---|
 | claude | `--model <model>` | `--effort <low\|medium\|high\|xhigh\|max>` | Verified on Claude Code 2.1.196. |
-| codex | `--model <model>` | `-c 'model_reasoning_effort="<low\|medium\|high\|xhigh\|max>"'` | Verified 2026-08-20 on codex-cli 0.147.0. The catalog advertises low/medium/high/xhigh/max for Luna and also lists ultra for Sol and Terra; firstmate maps only the shared vocabulary through max and does not map ultra. |
+| codex | `--model <model>` | `-c 'model_reasoning_effort="<low\|medium\|high\|xhigh\|max>"'` | Verified 2026-08-20 on codex-cli 0.147.0; see the [Codex CLI effort evidence](../../../docs/verification/runtime-backends.md#codex-cli-effort). |
 | grok | `--model <model>` | `--reasoning-effort <low\|medium\|high>` | Verified on grok 0.2.99 (2026-07-13). `--effort` is an alias, but firstmate's profile axis is reasoning effort. As of 0.2.99 the ceiling is `high`; both `xhigh` and `max` are rejected with `use one of: high, medium, low`, so firstmate omits them. |
 | pi / pi-signed | `--model <model>` | `--thinking <low\|medium\|high\|xhigh\|max>` | Verified 2026-07-27 on Pi and pi-signed 0.82.0. Both expose the same accepted thinking levels and completed the same model-qualified max-thinking smoke. |
 | opencode | `--model <provider/model>` | none for firstmate's interactive launch | Verified on opencode 1.17.6. `opencode run` has `--variant`, but firstmate launches the interactive `opencode --prompt` path, which has no verified effort flag. |
@@ -242,11 +242,8 @@ Codex's primary watcher protocol is `bin/fm-watch-checkpoint.sh --seconds "${FM_
 The checkpoint is deliberately foreground and bounded so Codex regains control regularly to process user messages and queued wakes.
 
 The effort axis was independently verified on 2026-08-20 with codex-cli 0.147.0.
-`codex --version` reported `codex-cli 0.147.0`.
-`codex debug models` reported `low`, `medium`, `high`, `xhigh`, `max` for `gpt-5.6-luna`, and additionally `ultra` for `gpt-5.6-sol` and `gpt-5.6-terra`.
-`codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-luna -c 'model_reasoning_effort="max"' 'Reply with exactly OK.'` exited 0 and reported `reasoning effort: max`.
-The same probe with `model_reasoning_effort="bogus"` exited 1 with HTTP 400 and enumerated `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` as supported values.
-Firstmate maps only `low`, `medium`, `high`, `xhigh`, and `max`; `ultra` remains intentionally unmapped.
+The exact Codex effort probes and observed results are recorded in the [Codex CLI effort evidence](../../../docs/verification/runtime-backends.md#codex-cli-effort).
+The vendor catalog includes `ultra` for `gpt-5.6-sol` and `gpt-5.6-terra`, but Firstmate maps only the shared vocabulary through `max`.
 
 ## opencode (VERIFIED 2026-06-11, v1.15.7-1.17.6; 1.18.4 busy-queue re-verified 2026-07-20)
 
