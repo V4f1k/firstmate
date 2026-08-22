@@ -178,6 +178,17 @@ shell_quote() {
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
+IFS= read -r -d '' PROCESS_CLEANUP_SECTION <<'EOF' || true
+# Synthetic load and helper-process cleanup
+If you create synthetic load or another long-lived helper process, record each process's exact identity immediately when it starts, using the exact PID returned by the launcher or a helper-provided identity that uniquely identifies it.
+If a launcher creates additional child processes and their identities are available, record each child identity as well.
+Stop every recorded process in the same turn that created or used it, using a bounded cleanup path that signals only those recorded identities, and verify that every recorded process has exited before continuing or ending the turn.
+This applies even when a helper runs outside the task worktree, including in scratch space or a pipeline-owned worktree, because ordinary task teardown is not a fallback and cannot reliably reach those processes.
+Never use broad `pkill -f`, restart the shared no-mistakes daemon, guess a PID, or stop a process you did not create.
+If a recorded process does not exit within the bound, report the cleanup failure and continue using only its recorded identity rather than broadening the match or deferring cleanup to teardown.
+EOF
+PROCESS_CLEANUP_SECTION=${PROCESS_CLEANUP_SECTION%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -210,6 +221,8 @@ $SECONDMATE_SCOPE
 
 # Project clones
 $PROJECT_CLONES_BODY
+
+$PROCESS_CLEANUP_SECTION
 
 # Operating model
 You are in an isolated firstmate home. The local \`AGENTS.md\` is your job description, and your local \`data/\`, \`state/\`, \`config/\`, and \`projects/\` dirs are yours to operate.
@@ -297,17 +310,6 @@ Do not add Herdr lifecycle commands to this unguarded brief by hand.
 EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
-
-IFS= read -r -d '' PROCESS_CLEANUP_SECTION <<'EOF' || true
-# Synthetic load and helper-process cleanup
-If you create synthetic load or another long-lived helper process, record each process's exact identity immediately when it starts, using the exact PID returned by the launcher or a helper-provided identity that uniquely identifies it.
-If a launcher creates additional child processes, record each child identity as well.
-Stop every recorded process in the same turn that created or used it, using a bounded cleanup path that signals only those recorded identities, and verify that every recorded process has exited before continuing or ending the turn.
-This applies even when a helper runs outside the task worktree, including in scratch space or a pipeline-owned worktree, because ordinary task teardown is not a fallback and cannot reliably reach those processes.
-Never use broad `pkill -f`, restart the shared no-mistakes daemon, guess a PID, or stop a process you did not create.
-If a recorded process does not exit within the bound, report the cleanup failure and continue using only its recorded identity rather than broadening the match or deferring cleanup to teardown.
-EOF
-PROCESS_CLEANUP_SECTION=${PROCESS_CLEANUP_SECTION%$'\n'}
 
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
