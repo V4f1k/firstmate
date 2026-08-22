@@ -20,6 +20,8 @@ TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 JOB_LABEL=dev.firstmate.remote-job
 CASE_N=0
 DOCTOR_WORKER_PID=
+DOCTOR_STALE_WORKER_PID=
+DOCTOR_REPLACEMENT_WORKER_PID=
 DOCTOR_GROUP_ID=
 DOCTOR_GROUP_LEADER=
 
@@ -33,6 +35,35 @@ doctor_pid_alive() {
     ''|Z*) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+doctor_stop_exact_pid() {
+  local pid=${1:-} i=0
+  case "$pid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  kill -CONT "$pid" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true
+  while doctor_pid_alive "$pid" && [ "$i" -lt 50 ]; do
+    i=$((i + 1))
+    sleep 0.1
+  done
+  if doctor_pid_alive "$pid"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    i=0
+    while doctor_pid_alive "$pid" && [ "$i" -lt 50 ]; do
+      i=$((i + 1))
+      sleep 0.1
+    done
+  fi
+  wait "$pid" 2>/dev/null || true
+  ! doctor_pid_alive "$pid"
+}
+
+cleanup_recorded_doctor_workers() {
+  doctor_stop_exact_pid "$DOCTOR_STALE_WORKER_PID" || true
+  doctor_stop_exact_pid "$DOCTOR_REPLACEMENT_WORKER_PID" || true
+  doctor_stop_exact_pid "$DOCTOR_WORKER_PID" || true
 }
 
 doctor_group_alive() {
@@ -79,7 +110,7 @@ cleanup_owned_doctor_group() {
   return 1
 }
 
-trap 'if [ -n "$DOCTOR_WORKER_PID" ]; then kill "$DOCTOR_WORKER_PID" 2>/dev/null || true; fi; cleanup_owned_doctor_group >/dev/null 2>&1 || true; fm_test_cleanup || true' EXIT
+trap 'cleanup_recorded_doctor_workers; cleanup_owned_doctor_group >/dev/null 2>&1 || true; fm_test_cleanup || true' EXIT
 
 # A fixture must be able to present a host with NO herdr, so the doctor never
 # sees the runner's own PATH. Only the two required tools are re-exposed, by
@@ -792,6 +823,74 @@ if kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null; then
 fi
 DOCTOR_WORKER_PID=
 pass "doctor refreshes stale worker identity before probing tools"
+
+# --- --fix replaces an owned worker whose heartbeat is stale -----------------
+
+new_case Linux with-herdr no-gui
+CASE_REMOTE_JOB_ACTIVE=
+CASE_PLATFORM_OVERRIDE=Linux
+rm -f "$CASE_BIN/sleep" "$CASE_BIN/uname"
+mkdir -p "$CASE_HOME/.local/bin"
+for tool in herdr tasks-axi treehouse claude; do
+  ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
+done
+set -m
+HOME="$CASE_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  "$ROOT/bin/fm-remote-job-worker.sh" > "$CASE_STATE/worker.out" 2> "$CASE_STATE/worker.err" &
+DOCTOR_WORKER_PID=$!
+set +m
+for _ in $(seq 1 100); do
+  [ -f "$CASE_HOME/.firstmate/remote-job/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$CASE_HOME/.firstmate/remote-job/worker.ready" \
+  "the stale-heartbeat fixture worker did not start"
+DOCTOR_STALE_WORKER_PID=$(cat "$CASE_HOME/.firstmate/remote-job/worker.pid")
+case "$DOCTOR_STALE_WORKER_PID" in
+  ''|*[!0-9]*) fail "the stale-heartbeat fixture published an invalid serving pid" ;;
+esac
+kill -STOP "$DOCTOR_STALE_WORKER_PID"
+stale_state=
+for _ in $(seq 1 50); do
+  stale_state=$(ps -p "$DOCTOR_STALE_WORKER_PID" -o stat= 2>/dev/null | tr -d '[:space:]')
+  case "$stale_state" in T*) break ;; esac
+  sleep 0.05
+done
+case "$stale_state" in
+  T*) ;;
+  *) fail "the stale-heartbeat fixture could not stop its exact serving pid" ;;
+esac
+touch -t 200001010000 "$CASE_HOME/.firstmate/remote-job/worker.ready"
+doctor
+expect_code 1 "$DOCTOR_RC" "doctor accepted a running worker with a stale heartbeat"
+assert_contains "$DOCTOR_OUT" 'check remote-job-worker=ok: the Linux remote job worker is running' \
+  "doctor did not distinguish the live worker process from its stale heartbeat"
+assert_contains "$DOCTOR_OUT" 'check remote-job-probe=fixable: the remote job worker has not reported a fresh probe' \
+  "doctor did not report the stale heartbeat"
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix could not replace the owned worker with a stale heartbeat"
+assert_contains "$DOCTOR_OUT" 'fix remote-job-worker=applied:' \
+  "--fix did not report replacing the stale-heartbeat worker"
+assert_contains "$DOCTOR_OUT" 'check remote-job-worker=ok:' \
+  "the replacement worker was not confirmed running"
+assert_contains "$DOCTOR_OUT" 'check remote-job-probe=ok: the remote job worker completed the required-tool probe' \
+  "the replacement worker did not complete the required-tool probe"
+DOCTOR_REPLACEMENT_WORKER_PID=$(cat "$CASE_HOME/.firstmate/remote-job/worker.pid")
+case "$DOCTOR_REPLACEMENT_WORKER_PID" in
+  ''|*[!0-9]*) fail "the replacement worker published an invalid serving pid" ;;
+esac
+[ "$DOCTOR_REPLACEMENT_WORKER_PID" != "$DOCTOR_STALE_WORKER_PID" ] \
+  || fail "--fix retained the serving pid whose heartbeat was stale"
+if doctor_pid_alive "$DOCTOR_STALE_WORKER_PID"; then
+  fail "--fix left the exact stale serving pid alive"
+fi
+doctor_stop_exact_pid "$DOCTOR_REPLACEMENT_WORKER_PID" \
+  || fail "the exact replacement serving pid did not exit during fixture cleanup"
+wait "$DOCTOR_WORKER_PID" 2>/dev/null || true
+DOCTOR_REPLACEMENT_WORKER_PID=
+DOCTOR_STALE_WORKER_PID=
+DOCTOR_WORKER_PID=
+pass "doctor replaces an owned worker with a stale heartbeat before probing tools"
 
 # --- the entrypoint symlink is recreated when it is missing ------------------
 

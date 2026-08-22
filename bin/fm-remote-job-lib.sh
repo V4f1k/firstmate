@@ -815,7 +815,11 @@ fm_remote_job_worker_owned_alive() {
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   identity_file=$(fm_remote_job_worker_identity_path)
   fm_remote_job_regular_bounded "$identity_file" 256 || return 1
-  fm_remote_job_probe "$account_home" || return 1
+  # Ownership and readiness are separate predicates. A worker with a stale
+  # heartbeat is still the owned process that must be stopped before a
+  # replacement can acquire the lock; treating stale readiness as absence
+  # launches a second supervisor behind the first one and leaves the queue
+  # without a path to recover.
   if fm_remote_job_lock_owner_matches_process "$account_home"; then
     [ "$pid" = "$FM_REMOTE_JOB_OWNER_PID" ] || return 1
     return 0
@@ -939,7 +943,10 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
   }
   fm_remote_job_prepare_state "$account_home" || return 1
   if fm_remote_job_worker_owned_alive "$root" "$account_home"; then
-    if fm_remote_job_worker_identity_matches "$root" "$account_home"; then return 0; fi
+    if fm_remote_job_probe "$account_home" &&
+      fm_remote_job_worker_identity_matches "$root" "$account_home"; then
+      return 0
+    fi
     # The owner pid is the serving child; its restart supervisor sits above it
     # and would immediately replace a lone process kill, so stop the whole
     # worker tree through its isolated group.
