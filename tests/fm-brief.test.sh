@@ -412,6 +412,8 @@ test_ship_brief_operating_contract() {
     "ordinary ship brief contradicted nonterminal daemon-error continuation"
   assert_grep "record each process's exact identity immediately when it starts" "$brief" \
     "ordinary ship brief did not require exact process identities for synthetic load or helpers"
+  assert_grep "If a launcher creates additional child processes and their identities are available, record each child identity as well." "$brief" \
+    "ordinary ship brief did not require available launcher child identities"
   assert_grep "Stop every recorded process in the same turn that created or used it" "$brief" \
     "ordinary ship brief did not require same-turn bounded cleanup"
   assert_grep "verify that every recorded process has exited" "$brief" \
@@ -770,7 +772,7 @@ test_scout_and_secondmate_load_decision_hold_policy() {
 
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
-  local brief
+  local brief cleanup_heading_count
   FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-scout-q6 alpha --scout >/dev/null 2>&1 \
     || fail "fm-brief.sh scout scaffold exited non-zero"
   brief="$BRIEF_HOME/data/brief-scout-q6/brief.md"
@@ -779,6 +781,8 @@ test_scout_and_secondmate_scaffold() {
   assert_grep "report.md" "$brief" "scout brief must point at the report deliverable"
   assert_grep "record each process's exact identity immediately when it starts" "$brief" \
     "scout brief did not require exact process identities for synthetic load or helpers"
+  assert_grep "If a launcher creates additional child processes and their identities are available, record each child identity as well." "$brief" \
+    "scout brief did not require available launcher child identities"
   assert_grep "Stop every recorded process in the same turn that created or used it" "$brief" \
     "scout brief did not require same-turn bounded cleanup"
   assert_grep "verify that every recorded process has exited" "$brief" \
@@ -790,6 +794,8 @@ test_scout_and_secondmate_scaffold() {
   # shellcheck disable=SC2016 # Literal backticks must stay literal in this generated-output assertion.
   assert_grep 'Never use broad `pkill -f`, restart the shared no-mistakes daemon, guess a PID, or stop a process you did not create.' "$brief" \
     "scout brief allowed unsafe broad or non-owned process cleanup"
+  assert_grep "continue using only its recorded identity rather than broadening the match or deferring cleanup to teardown" "$brief" \
+    "scout brief did not define bounded-cleanup failure behavior"
 
   FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
     FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-sm-q6 --secondmate alpha >/dev/null 2>&1 \
@@ -798,6 +804,25 @@ test_scout_and_secondmate_scaffold() {
   assert_present "$brief" "secondmate charter was not scaffolded"
   assert_grep "persistent second mate" "$brief" \
     "secondmate charter must declare its role"
+  cleanup_heading_count=$(grep -Fc "# Synthetic load and helper-process cleanup" "$brief")
+  [ "$cleanup_heading_count" -eq 1 ] || fail "secondmate charter must contain one authoritative helper-cleanup section (found $cleanup_heading_count)"
+  assert_grep "record each process's exact identity immediately when it starts" "$brief" \
+    "secondmate charter did not require exact process identities for direct synthetic load or helpers"
+  assert_grep "If a launcher creates additional child processes and their identities are available, record each child identity as well." "$brief" \
+    "secondmate charter did not require available launcher child identities"
+  assert_grep "Stop every recorded process in the same turn that created or used it" "$brief" \
+    "secondmate charter did not require bounded same-turn cleanup"
+  assert_grep "verify that every recorded process has exited" "$brief" \
+    "secondmate charter did not require exit verification before continuing or ending a turn"
+  assert_grep "ordinary task teardown is not a fallback" "$brief" \
+    "secondmate charter treated task teardown as a fallback for out-of-worktree processes"
+  assert_grep "outside the task worktree, including in scratch space or a pipeline-owned worktree" "$brief" \
+    "secondmate charter did not cover out-of-worktree helpers"
+  # shellcheck disable=SC2016 # Literal backticks must stay literal in this generated-output assertion.
+  assert_grep 'Never use broad `pkill -f`, restart the shared no-mistakes daemon, guess a PID, or stop a process you did not create.' "$brief" \
+    "secondmate charter allowed unsafe broad or non-owned process cleanup"
+  assert_grep "continue using only its recorded identity rather than broadening the match or deferring cleanup to teardown" "$brief" \
+    "secondmate charter did not define bounded-cleanup failure behavior"
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
