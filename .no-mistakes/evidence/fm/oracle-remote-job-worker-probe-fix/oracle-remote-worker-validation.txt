@@ -1,0 +1,40 @@
+Oracle live validation evidence
+===============================
+
+Route and code contract
+-----------------------
+FM_HOME=/Users/computer/firstmate
+FM_ROOT_OVERRIDE=/Users/computer/.treehouse/firstmate-110893/2/firstmate
+route=fleet-platform
+remote registry home=/home/firstmate/homes/fleet-platform
+remote registry root=/home/firstmate/src/firstmate
+
+Pre-command official doctor
+---------------------------
+command: FM_HOME=/Users/computer/firstmate FM_ROOT_OVERRIDE="/Users/computer/.treehouse/firstmate-110893/2/firstmate" bin/fm-on.sh fleet-platform fm-remote-doctor.sh
+exit=1
+check remote-job-worker=ok: the Linux remote job worker is running
+check remote-job-probe=fixable: the remote job worker has not reported a fresh probe
+error: this host is not ready for a remote second mate; unresolved: remote-job-probe
+
+Read-only pre-state attempt through the official route
+-------------------------------------------------------
+command: FM_HOME=/Users/computer/firstmate FM_ROOT_OVERRIDE="/Users/computer/.treehouse/firstmate-110893/2/firstmate" bin/fm-on.sh fleet-platform fm-remote-file.sh get config/trace-context 128
+exit=64
+error: remote job worker did not report ready after startup
+The target file state could not be read because the worker became the blocker.
+
+Authorized exact inheritance command
+-------------------------------------
+command: FM_HOME=/Users/computer/firstmate FM_ROOT_OVERRIDE="/Users/computer/.treehouse/firstmate-110893/2/firstmate" bin/fm-on.sh fleet-platform fm-remote-inherit.sh absent config/trace-context 0 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 25
+exit=64
+error: remote job worker did not report ready after startup
+The remote command did not reach fm-remote-inherit.sh, so no unchanged result was emitted.
+
+Post-command official doctor
+----------------------------
+command: FM_HOME=/Users/computer/firstmate FM_ROOT_OVERRIDE="/Users/computer/.treehouse/firstmate-110893/2/firstmate" bin/fm-on.sh fleet-platform fm-remote-doctor.sh
+exit=1
+check remote-job-worker=ok: the Linux remote job worker is running
+check remote-job-probe=fixable: the remote job worker has not reported a fresh probe
+error: this host is not ready for a remote second mate; unresolved: remote-job-probe

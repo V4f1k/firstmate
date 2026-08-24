@@ -1,0 +1,34 @@
+Official Oracle inheritance idempotence evidence
+worktree_commit=21dcafda26a052872b84438ecbfad57c200c4795
+route=fleet-platform
+item=config/trace-context
+generation=25
+--- before remote state ---
+path=/home/firstmate/homes/fleet-platform/config/trace-context
+state=absent
+path=/home/firstmate/homes/fleet-platform/config/.fm-inherit-trace-context.generation
+state=regular
+stat=77 bytes mode=600 mtime=1787415558 inode=2100434 links=1
+sha256=0447e1b181d1b9a5250c69a9e6a65deda69c2d639717f82d55d322c44cf32279
+content_begin
+25
+0
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+absent
+content_end
+--- exact authorized command ---
+error: remote job worker did not report ready after startup
+command_exit=64
+--- after remote state ---
+path=/home/firstmate/homes/fleet-platform/config/trace-context
+state=absent
+path=/home/firstmate/homes/fleet-platform/config/.fm-inherit-trace-context.generation
+state=regular
+stat=77 bytes mode=600 mtime=1787415558 inode=2100434 links=1
+sha256=0447e1b181d1b9a5250c69a9e6a65deda69c2d639717f82d55d322c44cf32279
+content_begin
+25
+0
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+absent
+content_end
