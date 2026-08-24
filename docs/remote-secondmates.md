@@ -84,6 +84,8 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh
 
 That run is read-only.
 It prints the exact `PATH` its own entrypoint launch produced, executes its required-tool probe through the installed worker when one is available, reports where each required and optional tool resolved, then reports one line per readiness check.
+The worker ownership and readiness checks are intentionally separate: on Linux, a worker can still own the verified lock and serving process identity while its heartbeat is stale, including when a long-poll output reader remains hung after its job target disappears.
+The doctor reports that state as `remote-job-worker=ok` with a fixable `remote-job-probe` gap, and `--fix` stops the exact owned worker tree before starting a replacement while keeping the probe, code-identity, and ownership checks fail-closed.
 Each gap is tagged `fixable:` when `--fix` can close it or `human:` when only a person at that machine can, and every gap is followed by an `action:` line naming the exact step.
 Any remaining gap exits non-zero.
 The script's own header owns the full line protocol.
@@ -241,7 +243,7 @@ bin/fm-test-run.sh tests/fm-remote-secondmate-lifecycle-e2e.test.sh
 bin/fm-test-run.sh tests/fm-remote-secondmate-trace-context.test.sh
 ```
 
-The remote-doctor regression keeps its foreground-server cases host-gated to actual Linux: it checks both ready and never-ready process-group paths there while leaving Darwin on the existing fixture coverage.
+The remote-doctor regression keeps its foreground-server cases host-gated to actual Linux: it checks both ready and never-ready process-group paths there, and through the real doctor interface it proves that a stale-heartbeat but owned worker is replaced before probing; Darwin remains on the existing fixture coverage.
 The account-level checks the doctor performs - a real Aqua login session, a real `launchctl` domain, and a real herdr server - are only ever exercised against fixtures here, so the readiness gate's behavior on a genuine Mac remains an operator-run smoke test.
 
 For a real-host smoke test, provision a disposable remote account and project, run the doctor and its repair against that account, launch the second mate, send one marked request, verify its correlated reply and structured fleet projection, simulate an unreachable host to confirm unknown-without-failover behavior, then retire only after the remote queue is empty.
